@@ -1,4 +1,4 @@
-package cyclicbarrier
+package barrier
 
 import (
 	"context"

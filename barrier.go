@@ -1,9 +1,4 @@
-// Copyright 2018 Maru Sama. All rights reserved.
-// Use of this source code is governed by the MIT license
-// that can be found in the LICENSE file.
-
-// Package cyclicbarrier provides an implementation of Cyclic Barrier primitive.
-package cyclicbarrier // import "github.com/marusama/cyclicbarrier"
+package barrier
 
 import (
 	"context"

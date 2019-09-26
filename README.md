@@ -12,7 +12,7 @@
 初始化
 
 ```go
-import "github.com/marusama/cyclicbarrier"
+import "github.com/aQuaYi/barrier"
 ...
 b1 := cyclicbarrier.New(10) // new cyclic barrier with parties = 10
 ...
