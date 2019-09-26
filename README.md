@@ -1,17 +1,14 @@
-cyclicbarrier
-=============
-[![Awesome](https://cdn.rawgit.com/sindresorhus/awesome/d7305f38d29fed78fa85652e3a63e154dd8e8829/media/badge.svg)](https://github.com/avelino/awesome-go#goroutines)
-[![Build Status](https://travis-ci.org/marusama/cyclicbarrier.svg?branch=master)](https://travis-ci.org/marusama/cyclicbarrier)
-[![Go Report Card](https://goreportcard.com/badge/github.com/marusama/cyclicbarrier)](https://goreportcard.com/report/github.com/marusama/cyclicbarrier)
-[![Coverage Status](https://coveralls.io/repos/github/marusama/cyclicbarrier/badge.svg?branch=master)](https://coveralls.io/github/marusama/cyclicbarrier?branch=master)
-[![GoDoc](https://godoc.org/github.com/marusama/cyclicbarrier?status.svg)](https://godoc.org/github.com/marusama/cyclicbarrier)
+# barrier
+
+[![Build Status](https://travis-ci.org/aQuaYi/barrier.svg?branch=master)](https://travis-ci.org/aQuaYi/barrier)
+[![Go Report Card](https://goreportcard.com/badge/github.com/aQuaYi/barrier)](https://goreportcard.com/report/github.com/aQuaYi/barrier)
+[![GoDoc](https://godoc.org/github.com/aQuaYi/barrier?status.svg)](https://godoc.org/github.com/aQuaYi/barrier)
 [![License](https://img.shields.io/github/license/mashape/apistatus.svg?maxAge=2592000)](LICENSE)
 
-CyclicBarrier is a synchronizer that allows a set of goroutines to wait for each other to reach a common execution point, also called a barrier.
+`barrier` 是一种基本的同步原语，当多个 `goroutine` 需要相互等待，以便到达同一个汇合点的时候，特别有用。可以看看[这道题](https://colobu.com/2019/07/23/concurrent-problem-h2o-factory/)是如何使用 `barrier` 的。
 
-Inspired by Java CyclicBarrier https://docs.oracle.com/javase/9/docs/api/java/util/concurrent/CyclicBarrier.html and C# Barrier https://msdn.microsoft.com/en-us/library/system.threading.barrier(v=vs.110).aspx
+## Usage
 
-### Usage
 Initiate
 ```go
 import "github.com/marusama/cyclicbarrier"
@@ -44,10 +41,10 @@ for i := 0; i < 10; i++ {           // create 10 goroutines (the same count as b
     wg.Add(1)
     go func() {
         for j := 0; j < 5; j++ {
-            
+
             // do some hard work 5 times
-            time.Sleep(100 * time.Millisecond)                     
-            
+            time.Sleep(100 * time.Millisecond)
+
             err := b.Await(context.TODO()) // ..and wait for other parties on the barrier.
                                            // Last arrived goroutine will do the barrier action
                                            // and then pass all other goroutines to the next round
