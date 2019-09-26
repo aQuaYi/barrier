@@ -5,15 +5,15 @@ import (
 	"sync"
 )
 
-// CyclicBarrier is a synchronizer that allows a set of goroutines to wait for each other
+// Barrier is a synchronizer that allows a set of goroutines to wait for each other
 // to reach a common execution point, also called a barrier.
 // CyclicBarriers are useful in programs involving a fixed sized party of goroutines
 // that must occasionally wait for each other.
 // The barrier is called cyclic because it can be re-used after the waiting goroutines are released.
-// A CyclicBarrier supports an optional Runnable command that is run once per barrier point,
+// A Barrier supports an optional Runnable command that is run once per barrier point,
 // after the last goroutine in the party arrives, but before any goroutines are released.
 // This barrier action is useful for updating shared-state before any of the parties continue.
-type CyclicBarrier interface {
+type Barrier interface {
 	// Await waits until all parties have invoked await on this barrier.
 	// If the barrier is reset while any goroutine is waiting, or if the barrier is broken when await is invoked,
 	// or while any goroutine is waiting, then ErrBrokenBarrier is returned.
@@ -54,21 +54,21 @@ type round struct {
 	isBroken bool          // is barrier broken
 }
 
-// cyclicBarrier impl CyclicBarrier intf
-type cyclicBarrier struct {
-	parties       int
-	barrierAction func() error
+// barrier impl CyclicBarrier intf
+type barrier struct {
+	parties int
+	action  func() error
 
 	lock  sync.RWMutex
 	round *round
 }
 
 // New initializes a new instance of the CyclicBarrier, specifying the number of parties.
-func New(parties int) CyclicBarrier {
+func New(parties int) Barrier {
 	if parties <= 0 {
 		panic("parties must be positive number")
 	}
-	return &cyclicBarrier{
+	return &barrier{
 		parties: parties,
 		lock:    sync.RWMutex{},
 		round: &round{
@@ -80,25 +80,23 @@ func New(parties int) CyclicBarrier {
 
 // NewWithAction initializes a new instance of the CyclicBarrier,
 // specifying the number of parties and the barrier action.
-func NewWithAction(parties int, barrierAction func() error) CyclicBarrier {
+func NewWithAction(parties int, barrierAction func() error) Barrier {
 	if parties <= 0 {
 		panic("parties must be positive number")
 	}
-	return &cyclicBarrier{
+	return &barrier{
 		parties: parties,
 		lock:    sync.RWMutex{},
 		round: &round{
 			waitCh:  make(chan struct{}),
 			brokeCh: make(chan struct{}),
 		},
-		barrierAction: barrierAction,
+		action: barrierAction,
 	}
 }
 
-func (b *cyclicBarrier) Await(ctx context.Context) error {
-	var (
-		ctxDoneCh <-chan struct{}
-	)
+func (b *barrier) Await(ctx context.Context) error {
+	var ctxDoneCh <-chan struct{}
 	if ctx != nil {
 		ctxDoneCh = ctx.Done()
 	}
@@ -145,8 +143,8 @@ func (b *cyclicBarrier) Await(ctx context.Context) error {
 		}
 	} else {
 		// we are last, run the barrier action and reset the barrier
-		if b.barrierAction != nil {
-			err := b.barrierAction()
+		if b.action != nil {
+			err := b.action()
 			if err != nil {
 				b.breakBarrier(true)
 				return err
@@ -157,7 +155,7 @@ func (b *cyclicBarrier) Await(ctx context.Context) error {
 	}
 }
 
-func (b *cyclicBarrier) breakBarrier(needLock bool) {
+func (b *barrier) breakBarrier(needLock bool) {
 	if needLock {
 		b.lock.Lock()
 		defer b.lock.Unlock()
@@ -171,7 +169,7 @@ func (b *cyclicBarrier) breakBarrier(needLock bool) {
 	}
 }
 
-func (b *cyclicBarrier) reset(safe bool) {
+func (b *barrier) reset(safe bool) {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 
@@ -190,24 +188,22 @@ func (b *cyclicBarrier) reset(safe bool) {
 	}
 }
 
-func (b *cyclicBarrier) Reset() {
+func (b *barrier) Reset() {
 	b.reset(false)
 }
 
-func (b *cyclicBarrier) GetParties() int {
+func (b *barrier) GetParties() int {
 	return b.parties
 }
 
-func (b *cyclicBarrier) GetNumberWaiting() int {
+func (b *barrier) GetNumberWaiting() int {
 	b.lock.RLock()
 	defer b.lock.RUnlock()
-
 	return b.round.count
 }
 
-func (b *cyclicBarrier) IsBroken() bool {
+func (b *barrier) IsBroken() bool {
 	b.lock.RLock()
 	defer b.lock.RUnlock()
-
 	return b.round.isBroken
 }

@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func checkBarrier(t *testing.T, b CyclicBarrier,
+func checkBarrier(t *testing.T, b Barrier,
 	expectedParties, expectedNumberWaiting int, expectedIsBroken bool) {
 
 	parties, numberWaiting := b.GetParties(), b.GetNumberWaiting()
@@ -31,7 +31,7 @@ func TestNew(t *testing.T) {
 		func() {
 			b := New(10)
 			checkBarrier(t, b, 10, 0, false)
-			if b.(*cyclicBarrier).barrierAction != nil {
+			if b.(*barrier).action != nil {
 				t.Error("barrier have unexpected barrierAction")
 			}
 		},
@@ -62,14 +62,14 @@ func TestNewWithAction(t *testing.T) {
 		func() {
 			b := NewWithAction(10, func() error { return nil })
 			checkBarrier(t, b, 10, 0, false)
-			if b.(*cyclicBarrier).barrierAction == nil {
+			if b.(*barrier).action == nil {
 				t.Error("barrier doesn't have expected barrierAction")
 			}
 		},
 		func() {
 			b := NewWithAction(10, nil)
 			checkBarrier(t, b, 10, 0, false)
-			if b.(*cyclicBarrier).barrierAction != nil {
+			if b.(*barrier).action != nil {
 				t.Error("barrier have unexpected barrierAction")
 			}
 		},
