@@ -7,9 +7,10 @@
 
 `barrier` 是一种基本的同步原语，当多个 `goroutine` 需要相互等待，以便到达同一个汇合点的时候，特别有用。可以看看[这道题](https://colobu.com/2019/07/23/concurrent-problem-h2o-factory/)是如何使用 `barrier` 的。
 
-## Usage
+## 使用方法
 
-Initiate
+初始化
+
 ```go
 import "github.com/marusama/cyclicbarrier"
 ...
