@@ -24,7 +24,7 @@ type Barrier interface {
 	// 3. If the current goroutine is the last goroutine to arrive, and a non-nil barrier action was supplied in the constructor,
 	// then the current goroutine runs the action before allowing the other goroutines to continue.
 	// 4. If an error occurs during the barrier action then that error will be returned and the barrier is placed in the broken state.
-	// 如果 action != nil, 最后一个 Await 的 goroutine 会执行 action。
+	// 5. 如果 action != nil, 最后一个 Await 的 goroutine 会执行 action。
 	Await(ctx context.Context) error
 
 	// Reset resets the barrier to its initial state.
@@ -46,6 +46,7 @@ type Barrier interface {
 var (
 	// ErrBrokenBarrier error used when a goroutine tries to wait upon a barrier that is in a broken state,
 	// or which enters the broken state while the goroutine is waiting.
+	// TODO: 自定义错误类型
 	ErrBrokenBarrier error
 )
 
@@ -57,46 +58,50 @@ type round struct {
 	isBroken bool          // is barrier broken
 }
 
-// barrier impl CyclicBarrier intf
+func newRound() *round {
+	return &round{
+		waitCh:  make(chan struct{}),
+		brokeCh: make(chan struct{}),
+	}
+}
+
+// barrier implement Barrier interface
 type barrier struct {
 	parties int
+	lock    sync.RWMutex
 	action  func() error
-
-	lock  sync.RWMutex
+	// every round has a new round
 	round *round
 }
 
 // NewWithAction initializes a new instance of the CyclicBarrier,
 // specifying the number of parties and the barrier action.
-func NewWithAction(parties int, barrierAction func() error) Barrier {
+func NewWithAction(parties int, action func() error) Barrier {
 	if parties <= 0 {
 		panic("parties must be positive number")
 	}
 	return &barrier{
 		parties: parties,
 		lock:    sync.RWMutex{},
-		round: &round{
-			waitCh:  make(chan struct{}),
-			brokeCh: make(chan struct{}),
-		},
-		action: barrierAction,
+		action:  action,
+		round:   newRound(),
 	}
 }
 
-// New initializes a new instance of the CyclicBarrier, specifying the number of parties.
+// New initializes a new instance of the Barrier, specifying the number of parties.
 func New(parties int) Barrier {
 	return NewWithAction(parties, nil)
 }
 
 func (b *barrier) Await(ctx context.Context) error {
-	var ctxDoneCh <-chan struct{}
+	var doneCh <-chan struct{}
 	if ctx != nil {
-		ctxDoneCh = ctx.Done()
+		doneCh = ctx.Done()
 	}
 
 	// check if context is done
 	select {
-	case <-ctxDoneCh:
+	case <-doneCh:
 		return ctx.Err()
 	default:
 	}
@@ -119,6 +124,7 @@ func (b *barrier) Await(ctx context.Context) error {
 
 	b.lock.Unlock()
 
+	// TODO: 有可能 > 吗？
 	if count > b.parties {
 		panic("CyclicBarrier.Await is called more than count of parties")
 	}
@@ -130,7 +136,7 @@ func (b *barrier) Await(ctx context.Context) error {
 			return nil
 		case <-brokeCh:
 			return ErrBrokenBarrier
-		case <-ctxDoneCh:
+		case <-doneCh:
 			b.breakBarrier(true)
 			return ctx.Err()
 		}
@@ -139,7 +145,7 @@ func (b *barrier) Await(ctx context.Context) error {
 		if b.action != nil {
 			err := b.action()
 			if err != nil {
-				b.breakBarrier(true)
+				b.breakBarrier(true) // TODO: 简化此处逻辑
 				return err
 			}
 		}
@@ -175,10 +181,7 @@ func (b *barrier) reset(safe bool) {
 	}
 
 	// create new round
-	b.round = &round{
-		waitCh:  make(chan struct{}),
-		brokeCh: make(chan struct{}),
-	}
+	b.round = newRound()
 }
 
 func (b *barrier) Reset() {
