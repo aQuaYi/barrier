@@ -7,7 +7,7 @@ import (
 
 // Barrier is a synchronizer that allows a set of goroutines to wait for each other
 // to reach a common execution point, also called a barrier.
-// CyclicBarriers are useful in programs involving a fixed sized party of goroutines
+// Barriers are useful in programs involving a fixed sized party of goroutines
 // that must occasionally wait for each other.
 // The barrier is called cyclic because it can be re-used after the waiting goroutines are released.
 // A Barrier supports an optional Runnable command that is run once per barrier point,
@@ -74,7 +74,7 @@ type barrier struct {
 	round *round
 }
 
-// NewWithAction initializes a new instance of the CyclicBarrier,
+// NewWithAction initializes a new instance of the Barrier,
 // specifying the number of parties and the barrier action.
 func NewWithAction(parties int, action func() error) Barrier {
 	if parties <= 0 {
@@ -126,7 +126,7 @@ func (b *barrier) Await(ctx context.Context) error {
 
 	// TODO: 有可能 > 吗？
 	if count > b.parties {
-		panic("CyclicBarrier.Await is called more than count of parties")
+		panic("Barrier.Await is called more than count of parties")
 	}
 
 	if count < b.parties {
