@@ -13,15 +13,18 @@ import (
 // A Barrier supports an optional Runnable command that is run once per barrier point,
 // after the last goroutine in the party arrives, but before any goroutines are released.
 // This barrier action is useful for updating shared-state before any of the parties continue.
+// Barrier 同步原语用于多个 goroutine 相互等待。
+// 即多个 goroutine 在同一个汇合点相互等待，直到全部到齐后，再一起继续执行的情况。
 type Barrier interface {
 	// Await waits until all parties have invoked await on this barrier.
-	// If the barrier is reset while any goroutine is waiting, or if the barrier is broken when await is invoked,
+	// 1. If the barrier is reset while any goroutine is waiting, or if the barrier is broken when await is invoked,
 	// or while any goroutine is waiting, then ErrBrokenBarrier is returned.
-	// If any goroutine is interrupted by ctx.Done() while waiting, then all other waiting goroutines
+	// 2. If any goroutine is interrupted by ctx.Done() while waiting, then all other waiting goroutines
 	// will return ErrBrokenBarrier and the barrier is placed in the broken state.
-	// If the current goroutine is the last goroutine to arrive, and a non-nil barrier action was supplied in the constructor,
+	// 3. If the current goroutine is the last goroutine to arrive, and a non-nil barrier action was supplied in the constructor,
 	// then the current goroutine runs the action before allowing the other goroutines to continue.
-	// If an error occurs during the barrier action then that error will be returned and the barrier is placed in the broken state.
+	// 4. If an error occurs during the barrier action then that error will be returned and the barrier is placed in the broken state.
+	// 如果 action != nil, 最后一个 Await 的 goroutine 会执行 action。
 	Await(ctx context.Context) error
 
 	// Reset resets the barrier to its initial state.
@@ -63,21 +66,6 @@ type barrier struct {
 	round *round
 }
 
-// New initializes a new instance of the CyclicBarrier, specifying the number of parties.
-func New(parties int) Barrier {
-	if parties <= 0 {
-		panic("parties must be positive number")
-	}
-	return &barrier{
-		parties: parties,
-		lock:    sync.RWMutex{},
-		round: &round{
-			waitCh:  make(chan struct{}),
-			brokeCh: make(chan struct{}),
-		},
-	}
-}
-
 // NewWithAction initializes a new instance of the CyclicBarrier,
 // specifying the number of parties and the barrier action.
 func NewWithAction(parties int, barrierAction func() error) Barrier {
@@ -93,6 +81,11 @@ func NewWithAction(parties int, barrierAction func() error) Barrier {
 		},
 		action: barrierAction,
 	}
+}
+
+// New initializes a new instance of the CyclicBarrier, specifying the number of parties.
+func New(parties int) Barrier {
+	return NewWithAction(parties, nil)
 }
 
 func (b *barrier) Await(ctx context.Context) error {
