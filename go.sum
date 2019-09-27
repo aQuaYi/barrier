@@ -1,2 +1,2 @@
-github.com/aQuaYi/barrier v0.0.0-20190926135757-ea535d814d3a h1:SJXgpvia7Ja5Vh73yn3YevnXpy+mpZaxzkKz1OdKnaU=
-github.com/aQuaYi/barrier v0.0.0-20190926135757-ea535d814d3a/go.mod h1:xV0bj2K37C6xw6lXz66JFl1XbcdBAuh8mIMhVnSiNr8=
+github.com/marusama/cyclicbarrier v0.0.0-20181027101648-08d457ab265c h1:vG6JbRFc93d2Mz+715yVOp3fMUAIaUdt9ddGBRqb/Kk=
+github.com/marusama/cyclicbarrier v0.0.0-20181027101648-08d457ab265c/go.mod h1:iQ75sUuUM7+Un77+lW8Eu/smgdrPHWa/5Nn6IukwWVU=

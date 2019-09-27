@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/marusama/cyclicbarrier"
 )
 
 func checkBarrier(t *testing.T, b Barrier,
@@ -313,6 +315,7 @@ func TestAwaitErrorInActionThenReset(t *testing.T) {
 	if b.IsBroken() {
 		t.Error("barrier must not be broken after reset")
 	}
+
 	checkBarrier(t, b, n, 0, false)
 }
 
@@ -349,5 +352,39 @@ func TestAwaitTooMuchGoroutines(t *testing.T) {
 
 	if panicCount == 0 {
 		t.Error("barrier must panic when await is called from too much goroutines")
+	}
+}
+
+func oneRound(parties, cycles int, wait func(context.Context) error) {
+	var wg sync.WaitGroup
+	wg.Add(parties)
+	for i := 0; i < parties; i++ {
+		go func() {
+			for c := 0; c < cycles; c++ {
+				wait(nil)
+			}
+			wg.Done()
+		}()
+	}
+	wg.Wait()
+}
+
+func Benchmark_CyclicBarrier(b *testing.B) {
+	parties := 10
+	cycles := 10
+	cb := cyclicbarrier.New(parties)
+	//
+	for i := 1; i < b.N; i++ {
+		oneRound(parties, cycles, cb.Await)
+	}
+}
+
+func Benchmark_Barrier(b *testing.B) {
+	parties := 10
+	cycles := 10
+	cb := New(parties)
+	//
+	for i := 1; i < b.N; i++ {
+		oneRound(parties, cycles, cb.Await)
 	}
 }
