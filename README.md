@@ -8,6 +8,12 @@
 
 `barrier` 是一种基本的同步原语，当多个 `goroutine` 需要相互等待，以便到达同一个汇合点的时候，特别有用。可以看看[这道题](https://colobu.com/2019/07/23/concurrent-problem-h2o-factory/)是如何使用 `barrier` 的。
 
+## 内容介绍
+
+<!-- TODO: 修改一下 -->
+
+由于 Barrier.SignalAndWait() 会进入临界区，所以，要求操作尽可能的少。
+
 ## 使用方法
 
 初始化

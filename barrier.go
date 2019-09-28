@@ -15,6 +15,7 @@ import (
 // This barrier action is useful for updating shared-state before any of the parties continue.
 // Barrier 同步原语用于多个 goroutine 相互等待。
 // 即多个 goroutine 在同一个汇合点相互等待，直到全部到齐后，再一起继续执行的情况。
+// NOTICE: 并发的 Barrier.SignalAndWait() 的 goroutine 数量一定要和 Barrier.GetParticipants() 相等。
 type Barrier interface {
 	// Await waits until all parties have invoked await on this barrier.
 	// 1. If the barrier is reset while any goroutine is waiting, or if the barrier is broken when await is invoked,
@@ -34,6 +35,10 @@ type Barrier interface {
 	// 5. 如果 action != nil, 最后一个 Await 的 goroutine 会执行 action。
 	Await(ctx context.Context) error
 
+	// 告知其他 goroutine， 自己已经到达汇合点
+	// 并等待其他 goroutine 的到达
+	SignalAndWait(ctx context.Context) error
+
 	// Reset resets the barrier to its initial state.
 	// If any parties are currently waiting at the barrier, they will return with a ErrBrokenBarrier.
 	Reset()
@@ -41,8 +46,8 @@ type Barrier interface {
 	// GetNumberWaiting returns the number of parties currently waiting at the barrier.
 	GetNumberWaiting() int
 
-	// GetParties returns the number of parties required to trip this barrier.
-	GetParties() int
+	// GetParticipants returns the number of parties required to trip this barrier.
+	GetParticipants() int
 
 	// IsBroken queries if this barrier is in a broken state.
 	// Returns true if one or more parties broke out of this barrier due to interruption by ctx.Done() or the last reset,
@@ -60,45 +65,96 @@ var (
 
 // round
 type round struct {
-	count    int           // count of goroutines for this roundtrip
-	waitCh   chan struct{} // wait channel for this roundtrip
-	brokeCh  chan struct{} // channel for isBroken broadcast
-	isBroken bool          // this round barrier has broken
+	count   int           // count of goroutines for this roundtrip
+	success chan struct{} // wait channel for this roundtrip
+	failure chan struct{} // channel for isBroken broadcast
+	// TODO: 删除 isBroken 属性
+	isBroken bool // this round barrier has broken
 }
 
 func newRound() *round {
 	return &round{
-		waitCh:  make(chan struct{}),
-		brokeCh: make(chan struct{}),
+		success: make(chan struct{}),
+		failure: make(chan struct{}),
 	}
 }
 
 // barrier implement Barrier interface
 type barrier struct {
-	parties int
-	lock    sync.RWMutex
-	action  func() error
+	participants int
+	lock         sync.RWMutex
+	action       func() error
 	// every round has a new round
 	round *round
 }
 
 // NewWithAction initializes a new instance of the Barrier,
 // specifying the number of parties and the barrier action.
-func NewWithAction(parties int, action func() error) Barrier {
-	if parties <= 0 {
+func NewWithAction(participants int, action func() error) Barrier {
+	if participants <= 0 {
 		panic("parties must be positive number")
 	}
 	return &barrier{
-		parties: parties,
-		lock:    sync.RWMutex{},
-		action:  action,
-		round:   newRound(),
+		participants: participants,
+		lock:         sync.RWMutex{},
+		action:       action,
+		round:        newRound(),
 	}
 }
 
 // New initializes a new instance of the Barrier, specifying the number of parties.
 func New(parties int) Barrier {
 	return NewWithAction(parties, nil)
+}
+
+func (b *barrier) SignalAndWait(ctx context.Context) error {
+	b.lock.Lock()
+	// saving in local variables to prevent race
+	success := b.round.success
+	failure := b.round.failure
+	// increment count of waiters
+	b.round.count++
+	count := b.round.count
+	b.lock.Unlock()
+
+	// 如果并发的 b.SignalAndWait() 的 goroutines 的数量
+	// 大于 b.participants 的话，
+	// 虽然 count++ 是在临界区内，但是 if 分支语句不在呀。
+	// count = participants 刚刚 unlock 后，还没有到达 if 前。
+	// 另一个 goroutine 进行了 count++ 运算
+	// 就会导致 count > participants 成立
+	if count > b.participants {
+		panic("goroutines calling b.SignalAndWait() is more than b.participants. Make sure they are equal.")
+	}
+
+	if count < b.participants {
+		// wait other parties
+		select {
+		case <-success:
+			return nil
+		case <-failure:
+			return ErrBrokenBarrier
+		case <-ctx.Done():
+			// TODO: 修改逻辑
+			b.breakBarrier(true)
+			return ctx.Err()
+		}
+	} else {
+		// we are the last one,
+		// run the barrier action
+		// and
+		// reset the barrier
+		if b.action != nil {
+			err := b.action()
+			if err != nil {
+				// TODO: 已经全员到齐了，为什么还要 break
+				b.breakBarrier(true) // TODO: 简化此处逻辑
+				return err           // TODO: 更新错误处理方式
+			}
+		}
+		b.reset(true)
+		return nil
+	}
 }
 
 func (b *barrier) Await(ctx context.Context) error {
@@ -127,17 +183,25 @@ func (b *barrier) Await(ctx context.Context) error {
 	b.round.count++
 
 	// saving in local variables to prevent race
-	waitCh := b.round.waitCh
-	brokeCh := b.round.brokeCh
+	waitCh := b.round.success
+	brokeCh := b.round.failure
 	count := b.round.count
 
 	b.lock.Unlock()
 
 	// TODO: 有可能 > 吗？
-	// barrier 的核心逻辑
-	if count > b.parties {
+	// 有可能的，
+	// 当并发的 Barrier.Await() 的 goroutine 数量大于 Barrier.GetParticipants() 时候，
+	// 虽然 count++ 是在临界区内，但是 if 分支语句不在呀。
+	// count = participants 刚刚 unlock 后，还没有到达 if 前。
+	// 另一个 goroutine 进行了 count++ 运算
+	// 就会导致 count > participants 成立
+	if count > b.participants {
 		panic("Barrier.Await is called more than count of parties")
-	} else if count < b.parties {
+	}
+
+	// barrier 的核心逻辑
+	if count < b.participants {
 		// wait other parties
 		select {
 		case <-waitCh:
@@ -176,7 +240,7 @@ func (b *barrier) breakBarrier(needLock bool) {
 		b.round.isBroken = true
 
 		// broadcast
-		close(b.round.brokeCh)
+		close(b.round.failure)
 	}
 }
 
@@ -186,7 +250,7 @@ func (b *barrier) Reset() {
 
 // broadcast all that everyone is waiting.
 func (b *barrier) broadcast() {
-	close(b.round.waitCh)
+	close(b.round.success)
 }
 
 func (b *barrier) reset(safe bool) {
@@ -195,7 +259,7 @@ func (b *barrier) reset(safe bool) {
 
 	if safe {
 		// broadcast to pass waiting goroutines
-		close(b.round.waitCh)
+		close(b.round.success)
 
 	} else if b.round.count > 0 {
 		b.breakBarrier(false)
@@ -205,9 +269,9 @@ func (b *barrier) reset(safe bool) {
 	b.round = newRound()
 }
 
-func (b *barrier) GetParties() int {
+func (b *barrier) GetParticipants() int {
 	// never change, no lock
-	return b.parties
+	return b.participants
 }
 
 func (b *barrier) GetNumberWaiting() int {

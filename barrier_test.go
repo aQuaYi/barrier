@@ -3,6 +3,7 @@ package barrier
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -14,7 +15,7 @@ import (
 func checkBarrier(t *testing.T, b Barrier,
 	expectedParties, expectedNumberWaiting int, expectedIsBroken bool) {
 
-	parties, numberWaiting := b.GetParties(), b.GetNumberWaiting()
+	parties, numberWaiting := b.GetParticipants(), b.GetNumberWaiting()
 	isBroken := b.IsBroken()
 
 	if expectedParties >= 0 && parties != expectedParties {
@@ -321,27 +322,29 @@ func TestAwaitErrorInActionThenReset(t *testing.T) {
 
 func TestAwaitTooMuchGoroutines(t *testing.T) {
 
-	n := 100  // goroutines count
-	m := 1000 // inner cycle count
+	goroutines := 100 // goroutines count
+	cycle := 1000     // inner cycle count
 	b := New(1)
 	ctx := context.Background()
 
 	var panicCount int32
 
 	wg := sync.WaitGroup{}
-	for i := 0; i < n; i++ {
+	for i := 0; i < goroutines; i++ {
 		wg.Add(1)
 		go func(num int) {
 			defer func() {
-				if recover() != nil {
+				r := recover()
+				if r != nil {
+					fmt.Println("too many: ", r)
 					atomic.AddInt32(&panicCount, 1)
 				}
 				wg.Done()
 			}()
-			for j := 0; j < m; j++ {
+			for j := 0; j < cycle; j++ {
 				err := b.Await(ctx)
 				if err != nil {
-					panic(err)
+					fmt.Println("b.Await Err: ", err)
 				}
 			}
 		}(i)
@@ -353,6 +356,7 @@ func TestAwaitTooMuchGoroutines(t *testing.T) {
 	if panicCount == 0 {
 		t.Error("barrier must panic when await is called from too much goroutines")
 	}
+
 }
 
 func oneRound(parties, cycles int, wait func(context.Context) error) {
