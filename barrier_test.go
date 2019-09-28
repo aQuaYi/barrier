@@ -365,7 +365,7 @@ func oneRound(parties, cycles int, wait func(context.Context) error) {
 	for i := 0; i < parties; i++ {
 		go func() {
 			for c := 0; c < cycles; c++ {
-				wait(nil)
+				wait(context.TODO())
 			}
 			wg.Done()
 		}()
