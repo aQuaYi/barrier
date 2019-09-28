@@ -5,6 +5,8 @@ import (
 	"sync"
 )
 
+var ()
+
 // Barrier is a synchronizer that allows a set of goroutines to wait for each other
 // to reach a common execution point, also called a barrier.
 // Barriers are useful in programs involving a fixed sized party of goroutines
