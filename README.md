@@ -15,6 +15,11 @@
 
 由于 Barrier.SignalAndWait() 会进入临界区，所以，要求操作尽可能的少。
 
+与 [marusama/cyclicbarrier](https://github.com/marusama/cyclicbarrier) 相比，做出了以下修改
+
+1. barrier.action 的类型变成了 `func()`，取消返回 error 后，逻辑更简单。
+2. 移除了 `Barrier` 接口中的 `Reset` 方法。由最后到达 barrier 的 goroutine 负责重置。因为如果对外暴露了 `Reset` 方法的话，会需要对所有的 goroutine 进行一次同步，可以看看 [Java 版 CyclicBarrier 的说明](https://docs.oracle.com/javase/9/docs/api/java/util/concurrent/CyclicBarrier.html#reset--)
+
 ## 使用方法
 
 初始化
