@@ -23,7 +23,6 @@
 4. 取消了 `NewWithAction`，但增加了 `SetAction`。这样的话，利用 `闭包` 属性，在 `action` 可以调用 `Barrier` 接口的方法。这样的话， `Barrier.IsBroken` 才更有意义。
 5. 移除了 `GetNumberWaiting` 和 `GetParities` 方法。我想了两天，也想不出来这两个方法，有存在的意义。
 
-
 ## 使用方法
 
 初始化
@@ -35,16 +34,15 @@ b1 := cyclicbarrier.New(10) // new cyclic barrier with parties = 10
 ...
 b2 := cyclicbarrier.NewWithAction(10, func() error { return nil }) // new cyclic barrier with parties = 10 and with defined barrier action
 ```
-Await
+
+Wait
+
 ```go
-b.Await(ctx)    // await other parties
-```
-Reset
-```go
-b.Reset()       // reset the barrier
+b.Wait(ctx)    // await other parties
 ```
 
 ### Simple example
+
 ```go
 // create a barrier for 10 parties with an action that increments counter
 // this action will be called each time when all goroutines reach the barrier
@@ -78,4 +76,4 @@ wg.Wait()
 fmt.Println(cnt)                    // cnt = 5, it means that the barrier was passed 5 times
 ```
 
-For more documentation see https://godoc.org/github.com/marusama/cyclicbarrier
+For more documentation see <https://godoc.org/github.com/aQuaYi/barrier>
