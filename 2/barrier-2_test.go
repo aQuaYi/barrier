@@ -56,14 +56,15 @@ func TestNew(t *testing.T) {
 func TestNewWithAction(t *testing.T) {
 	tests := []func(){
 		func() {
-			b := NewWithAction(10, func() error { return nil })
+			b := New(10)
+			b.SetAction(func() error { return nil })
 			checkBarrier(t, b, 10, false)
 			if b.(*barrier).action == nil {
 				t.Error("barrier doesn't have expected barrierAction")
 			}
 		},
 		func() {
-			b := NewWithAction(10, nil)
+			b := New(10)
 			checkBarrier(t, b, 10, false)
 			if b.(*barrier).action != nil {
 				t.Error("barrier have unexpected barrierAction")
@@ -75,7 +76,7 @@ func TestNewWithAction(t *testing.T) {
 					t.Error("Panic expected")
 				}
 			}()
-			_ = NewWithAction(0, func() error { return nil })
+			_ = New(0)
 		},
 		func() {
 			defer func() {
@@ -83,7 +84,7 @@ func TestNewWithAction(t *testing.T) {
 					t.Error("Panic expected")
 				}
 			}()
-			_ = NewWithAction(-1, func() error { return nil })
+			_ = New(-1)
 		},
 	}
 	for _, test := range tests {
@@ -202,7 +203,8 @@ func TestAwaitAction(t *testing.T) {
 	ctx := context.Background()
 
 	cnt := 0
-	b := NewWithAction(n, func() error {
+	b := New(n)
+	b.SetAction(func() error {
 		cnt++
 		return nil
 	})
@@ -237,7 +239,8 @@ func TestAwaitErrorInActionThenReset(t *testing.T) {
 	isActionCalled := false
 	var expectedErrCount, errBrokenBarrierCount int32
 
-	b := NewWithAction(n, func() error {
+	b := New(10)
+	b.SetAction(func() error {
 		isActionCalled = true
 		return errExpected
 	})

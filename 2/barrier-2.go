@@ -55,6 +55,8 @@ type Barrier interface {
 	// or a barrier action failed due to an error;
 	// false otherwise.
 	IsBroken() bool
+
+	SetAction(func() error) // TODO: 删除此处 error
 }
 
 var (
@@ -81,13 +83,9 @@ type round struct {
 	count int
 	// broadcast success result when close(success)
 	success chan struct{}
+	// broadcast broken status to waiting goroutine when close(borken)
 	// this round is broken status after close(broken)
 	broken chan struct{}
-}
-
-func (r *round) newComer() {
-
-	return
 }
 
 func newRound() *round {
@@ -97,29 +95,23 @@ func newRound() *round {
 	}
 }
 
+// NOTICE: used in lock
+// save returns in local variables to prevent race
+func (r *round) meetNewComer() (count int, success, broken chan struct{}) {
+	r.count++
+	count = r.count
+	success = r.success
+	broken = r.broken
+	return
+}
+
 // barrier implements Barrier interface
 type barrier struct {
 	participants int
 	lock         sync.RWMutex
-	action       func() error // TODO: 删除此处内容
-	action2      func()       // TODO: 删除尾部的 2
+	action       func() error // TODO: 删除 error
 	// every round has a new round
 	round *round
-}
-
-// NewWithAction initializes a new instance of the Barrier,
-// specifying the number of parties and the barrier action.
-// TODO: 删除此处内容，使用上面的内容替换
-func NewWithAction(participants int, action func() error) Barrier {
-	if participants <= 0 {
-		panic("parties must be positive number")
-	}
-	return &barrier{
-		participants: participants,
-		lock:         sync.RWMutex{},
-		action:       action,
-		round:        newRound(),
-	}
 }
 
 // New initializes a new instance of the Barrier, specifying the number of parties.
@@ -138,23 +130,18 @@ func New(participants int) Barrier {
 // action will be execute by
 // the last **Wait** goroutine
 // OR the first **Break** goroutine
-func (b *barrier) SetAction(action func()) {
+func (b *barrier) SetAction(action func() error) {
 	b.lock.Lock()
-	b.action2 = action
+	b.action = action
 	b.lock.Unlock()
 }
 
 func (b *barrier) Wait(ctx context.Context) error {
 	b.lock.Lock()
-	// saving in local variables to prevent race
-	success := b.round.success
-	broken := b.round.broken
-	// increment count of waiters
-	b.round.count++
-	count := b.round.count
+	count, success, broken := b.round.meetNewComer()
 	b.lock.Unlock()
 
-	// 如果并发的 b.SignalAndWait() 的 goroutines 的数量
+	// 如果并发的 b.Wait() 的 goroutines 的数量
 	// 大于 b.participants 的话，
 	// 虽然 count++ 是在临界区内，但是 if 分支语句不在呀。
 	// count = participants 刚刚 unlock 后，还没有到达 if 前。
@@ -173,7 +160,7 @@ func (b *barrier) Wait(ctx context.Context) error {
 			return ErrBrokenByOther
 		case <-ctx.Done():
 			// TODO: 修改逻辑
-			b.breakIt()
+			b.breakRound()
 			// return ctx.Err()
 			return fmt.Errorf("barrier is broken: %w", ctx.Err())
 		}
@@ -192,14 +179,27 @@ func (b *barrier) Wait(ctx context.Context) error {
 		}
 		// 无论成功与否
 		// 最后达到的 goroutine 负责重置 barrier
-		b.resetIt()
+		b.resetRound()
 		return nil
 	}
 }
 
 // TODO: 完成 Break 方法
 func (b *barrier) Break() {
-	return
+	// TODO: 把 round.meetNewComer 改写成 b.meetNewComer
+	b.lock.Lock()
+	count, _, _ := b.round.meetNewComer()
+	b.lock.Unlock()
+
+	if count > b.participants {
+		panic("goroutines calling b.Wait() is more than b.participants. Make sure they are equal.")
+	}
+
+	b.breakRound()
+
+	if count == b.participants {
+		b.resetRound()
+	}
 }
 
 func (b *barrier) Await(ctx context.Context) error {
@@ -275,7 +275,7 @@ func (b *barrier) Await(ctx context.Context) error {
 	}
 }
 
-func (b *barrier) breakIt() {
+func (b *barrier) breakRound() {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 	if !b.round.isBroken {
@@ -285,21 +285,20 @@ func (b *barrier) breakIt() {
 	}
 }
 
+// TODO: 删除此处内容
 func (b *barrier) breakBarrier(needLock bool) {
 	if needLock {
 		b.lock.Lock()
 		defer b.lock.Unlock()
 	}
-
 	if !b.round.isBroken {
 		b.round.isBroken = true
 		// broadcast
 		close(b.round.broken)
 	}
-
 }
 
-func (b *barrier) resetIt() {
+func (b *barrier) resetRound() {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 	if !b.round.isBroken {
@@ -317,6 +316,7 @@ func (b *barrier) broadcast() {
 	close(b.round.success)
 }
 
+// TODO: 删除此处内容
 func (b *barrier) reset(safe bool) {
 	b.lock.Lock()
 	defer b.lock.Unlock()
