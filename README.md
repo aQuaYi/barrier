@@ -19,6 +19,10 @@
 
 1. barrier.action 的类型变成了 `func()`，取消返回 error 后，逻辑更简单。
 2. 移除了 `Barrier` 接口中的 `Reset` 方法。由最后到达 barrier 的 goroutine 负责重置。因为如果对外暴露了 `Reset` 方法的话，会需要对所有的 goroutine 进行一次同步，可以看看 [Java 版 CyclicBarrier 的说明](https://docs.oracle.com/javase/9/docs/api/java/util/concurrent/CyclicBarrier.html#reset--)
+3. 添加了 `break` 方法。理由是基于以下假设，barrier 可能存在以下使用情况，多个 goroutine 在为同一个东西准备不同的原材料，如果某个 goroutine 始终无法完成准备。为了结束此 round 的运行，它需要通知其他 goroutine。但它不能调用 `wait` 方法，因为 `wait` 隐含了`已准备好`的意思。调用 `Break` 就可以很恰当地表达 `我已到达汇合点，但很抱歉，没有做好准备` 的意思。
+4. 取消了 `NewWithAction`，但增加了 `SetAction`。这样的话，利用 `闭包` 属性，在 `action` 可以调用 `Barrier` 接口的方法。这样的话， `Barrier.IsBroken` 才更有意义。
+5. 移除了 `GetNumberWaiting` 和 `GetParities` 方法。我想了两天，也想不出来这两个方法，有存在的意义。
+
 
 ## 使用方法
 
