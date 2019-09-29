@@ -1,21 +1,18 @@
-package barrier
+package cyclicbarrier
 
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/marusama/cyclicbarrier"
 )
 
-func checkBarrier(t *testing.T, b Barrier,
+func checkBarrier(t *testing.T, b CyclicBarrier,
 	expectedParties, expectedNumberWaiting int, expectedIsBroken bool) {
 
-	parties, numberWaiting := b.GetParticipants(), b.GetNumberWaiting()
+	parties, numberWaiting := b.GetParties(), b.GetNumberWaiting()
 	isBroken := b.IsBroken()
 
 	if expectedParties >= 0 && parties != expectedParties {
@@ -34,7 +31,7 @@ func TestNew(t *testing.T) {
 		func() {
 			b := New(10)
 			checkBarrier(t, b, 10, 0, false)
-			if b.(*barrier).action != nil {
+			if b.(*cyclicBarrier).barrierAction != nil {
 				t.Error("barrier have unexpected barrierAction")
 			}
 		},
@@ -65,14 +62,14 @@ func TestNewWithAction(t *testing.T) {
 		func() {
 			b := NewWithAction(10, func() error { return nil })
 			checkBarrier(t, b, 10, 0, false)
-			if b.(*barrier).action == nil {
+			if b.(*cyclicBarrier).barrierAction == nil {
 				t.Error("barrier doesn't have expected barrierAction")
 			}
 		},
 		func() {
 			b := NewWithAction(10, nil)
 			checkBarrier(t, b, 10, 0, false)
-			if b.(*barrier).action != nil {
+			if b.(*cyclicBarrier).barrierAction != nil {
 				t.Error("barrier have unexpected barrierAction")
 			}
 		},
@@ -316,35 +313,32 @@ func TestAwaitErrorInActionThenReset(t *testing.T) {
 	if b.IsBroken() {
 		t.Error("barrier must not be broken after reset")
 	}
-
 	checkBarrier(t, b, n, 0, false)
 }
 
 func TestAwaitTooMuchGoroutines(t *testing.T) {
 
-	goroutines := 100 // goroutines count
-	cycle := 1000     // inner cycle count
+	n := 100  // goroutines count
+	m := 1000 // inner cycle count
 	b := New(1)
 	ctx := context.Background()
 
 	var panicCount int32
 
 	wg := sync.WaitGroup{}
-	for i := 0; i < goroutines; i++ {
+	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func(num int) {
 			defer func() {
-				r := recover()
-				if r != nil {
-					fmt.Println("too many: ", r)
+				if recover() != nil {
 					atomic.AddInt32(&panicCount, 1)
 				}
 				wg.Done()
 			}()
-			for j := 0; j < cycle; j++ {
+			for j := 0; j < m; j++ {
 				err := b.Await(ctx)
 				if err != nil {
-					fmt.Println("b.Await Err: ", err)
+					panic(err)
 				}
 			}
 		}(i)
@@ -355,40 +349,5 @@ func TestAwaitTooMuchGoroutines(t *testing.T) {
 
 	if panicCount == 0 {
 		t.Error("barrier must panic when await is called from too much goroutines")
-	}
-
-}
-
-func oneRound(parties, cycles int, wait func(context.Context) error) {
-	var wg sync.WaitGroup
-	wg.Add(parties)
-	for i := 0; i < parties; i++ {
-		go func() {
-			for c := 0; c < cycles; c++ {
-				wait(context.TODO())
-			}
-			wg.Done()
-		}()
-	}
-	wg.Wait()
-}
-
-func Benchmark_CyclicBarrier(b *testing.B) {
-	parties := 10
-	cycles := 10
-	cb := cyclicbarrier.New(parties)
-	//
-	for i := 1; i < b.N; i++ {
-		oneRound(parties, cycles, cb.Await)
-	}
-}
-
-func Benchmark_Barrier(b *testing.B) {
-	parties := 10
-	cycles := 10
-	cb := New(parties)
-	//
-	for i := 1; i < b.N; i++ {
-		oneRound(parties, cycles, cb.Await)
 	}
 }
