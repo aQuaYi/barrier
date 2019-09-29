@@ -15,12 +15,8 @@ import (
 func checkBarrier(t *testing.T, b Barrier,
 	expectedParties int, expectedIsBroken bool) {
 
-	parties := b.GetParticipants()
 	isBroken := b.IsBroken()
 
-	if expectedParties >= 0 && parties != expectedParties {
-		t.Error("barrier must have parties = ", expectedParties, ", but has ", parties)
-	}
 	if isBroken != expectedIsBroken {
 		t.Error("barrier must have isBroken = ", expectedIsBroken, ", but has ", isBroken)
 	}
@@ -362,27 +358,45 @@ type boc struct {
 	ch   chan struct{}
 }
 
+var g = 100
+
 func Benchmark_boc_readlock(b *testing.B) {
 	bb := &boc{}
+	var wg sync.WaitGroup
 	b.ResetTimer()
 	for i := 1; i < b.N; i++ {
-		bb.l.RLock()
-		if bb.isOk {
-		} else {
+		wg.Add(g)
+		for j := 0; j < g; j++ {
+			go func() {
+				bb.l.RLock()
+				if bb.isOk {
+				} else {
+				}
+				bb.l.RUnlock()
+				wg.Done()
+			}()
 		}
-		bb.l.RUnlock()
+		wg.Wait()
 	}
 }
 
 func Benchmark_boc_lock(b *testing.B) {
 	bb := &boc{}
+	var wg sync.WaitGroup
 	b.ResetTimer()
 	for i := 1; i < b.N; i++ {
-		bb.l.Lock()
-		if bb.isOk {
-		} else {
+		wg.Add(g)
+		for j := 0; j < g; j++ {
+			go func() {
+				bb.l.Lock()
+				if bb.isOk {
+				} else {
+				}
+				bb.l.Unlock()
+				wg.Done()
+			}()
 		}
-		bb.l.Unlock()
+		wg.Wait()
 	}
 }
 
@@ -391,11 +405,21 @@ func Benchmark_boc_readclosedChannel(b *testing.B) {
 		ch: make(chan struct{}),
 	}
 	close(bb.ch)
+	var wg sync.WaitGroup
 	b.ResetTimer()
 	for i := 1; i < b.N; i++ {
-		select {
-		case <-bb.ch:
-		default:
+		wg.Add(g)
+		for j := 0; j < g; j++ {
+			go func() {
+				bb.l.Lock()
+				select {
+				case <-bb.ch:
+				default:
+				}
+				bb.l.Unlock()
+				wg.Done()
+			}()
 		}
+		wg.Wait()
 	}
 }

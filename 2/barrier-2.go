@@ -39,20 +39,16 @@ type Barrier interface {
 	// 5. 如果 action != nil, 最后一个 Await 的 goroutine 会执行 action。
 	Await(ctx context.Context) error
 
-	// 告知其他 goroutine， 自己已经到达汇合点
-	// 并等待其他 goroutine 的到达
-	// 对于一个 goroutine 来说， 要么 wait; 要么 broke
-	SignalAndWait(ctx context.Context) error
+	// Wait After this goroutine has got ready
+	// In waiting, the goroutine can be canceled by context.Context
+	Wait(ctx context.Context) error
 
 	// BrokeAndSignal used when a goroutine can not prepare the need stuff finally
 	// goroutine has to broke the barrier the tell the others.
 	//
 	// TODO: 添加此处内容
 	// 对于一个 goroutine 来说， 要么 wait; 要么 broke
-	BrokeAndSignal()
-
-	// GetParticipants returns the number of parties required to trip this barrier.
-	GetParticipants() int
+	Break()
 
 	// IsBroken queries if this barrier is in a broken state.
 	// Returns true if one or more parties broke out of this barrier due to interruption by ctx.Done() or the last reset,
@@ -89,6 +85,11 @@ type round struct {
 	broken chan struct{}
 }
 
+func (r *round) newComer() {
+
+	return
+}
+
 func newRound() *round {
 	return &round{
 		success: make(chan struct{}),
@@ -106,20 +107,6 @@ type barrier struct {
 	round *round
 }
 
-// // NewWithAction2 initializes a new instance of the Barrier,
-// // specifying the number of parties and the barrier action.
-// func NewWithAction2(participants int, action func()) Barrier {
-// 	if participants <= 0 {
-// 		panic("parties must be positive number")
-// 	}
-// 	return &barrier{
-// 		participants: participants,
-// 		lock:         sync.RWMutex{},
-// 		action:       action,
-// 		round:        newRound(),
-// 	}
-// }
-
 // NewWithAction initializes a new instance of the Barrier,
 // specifying the number of parties and the barrier action.
 // TODO: 删除此处内容，使用上面的内容替换
@@ -136,8 +123,15 @@ func NewWithAction(participants int, action func() error) Barrier {
 }
 
 // New initializes a new instance of the Barrier, specifying the number of parties.
-func New(parties int) Barrier {
-	return NewWithAction(parties, nil)
+func New(participants int) Barrier {
+	if participants <= 0 {
+		panic("parties must be positive number")
+	}
+	return &barrier{
+		participants: participants,
+		lock:         sync.RWMutex{},
+		round:        newRound(),
+	}
 }
 
 // SetAction if you need
@@ -150,7 +144,7 @@ func (b *barrier) SetAction(action func()) {
 	b.lock.Unlock()
 }
 
-func (b *barrier) SignalAndWait(ctx context.Context) error {
+func (b *barrier) Wait(ctx context.Context) error {
 	b.lock.Lock()
 	// saving in local variables to prevent race
 	success := b.round.success
@@ -167,7 +161,7 @@ func (b *barrier) SignalAndWait(ctx context.Context) error {
 	// 另一个 goroutine 进行了 count++ 运算
 	// 就会导致 count > participants 成立
 	if count > b.participants {
-		panic("goroutines calling b.SignalAndWait() is more than b.participants. Make sure they are equal.")
+		panic("goroutines calling b.Wait() is more than b.participants. Make sure they are equal.")
 	}
 
 	if count < b.participants {
@@ -201,6 +195,11 @@ func (b *barrier) SignalAndWait(ctx context.Context) error {
 		b.resetIt()
 		return nil
 	}
+}
+
+// TODO: 完成 Break 方法
+func (b *barrier) Break() {
+	return
 }
 
 func (b *barrier) Await(ctx context.Context) error {
@@ -331,18 +330,8 @@ func (b *barrier) reset(safe bool) {
 	b.round = newRound()
 }
 
-func (b *barrier) GetParticipants() int {
-	// never change, no lock
-	return b.participants
-}
-
 func (b *barrier) IsBroken() bool {
 	b.lock.RLock()
 	defer b.lock.RUnlock()
 	return b.round.isBroken
-}
-
-// TODO: 完成 BrokeAndSignal 方法
-func (b *barrier) BrokeAndSignal() {
-	return
 }
