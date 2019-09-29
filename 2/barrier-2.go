@@ -51,11 +51,6 @@ type Barrier interface {
 	// 对于一个 goroutine 来说， 要么 wait; 要么 broke
 	BrokeAndSignal()
 
-	// Reset resets the barrier to its initial state.
-	// If any parties are currently waiting at the barrier, they will return with a ErrBrokenBarrier.
-	// TODO: 删除此处内容
-	Reset()
-
 	// GetParticipants returns the number of parties required to trip this barrier.
 	GetParticipants() int
 
@@ -316,10 +311,6 @@ func (b *barrier) resetIt() {
 		// ！isBroken 才需要 close（success） 来通知大家。
 	}
 	b.round = newRound()
-}
-
-func (b *barrier) Reset() {
-	b.reset(false)
 }
 
 // broadcast all that everyone is waiting.

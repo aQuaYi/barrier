@@ -232,32 +232,6 @@ func TestAwaitAction(t *testing.T) {
 	}
 }
 
-func TestReset(t *testing.T) {
-	n := 100        // goroutines count
-	b := New(n + 1) // parties are more than goroutines count so all goroutines will wait
-	ctx := context.Background()
-
-	go func() {
-		time.Sleep(30 * time.Millisecond)
-		b.Reset()
-	}()
-
-	wg := sync.WaitGroup{}
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func() {
-			err := b.Await(ctx)
-			if err != ErrBrokenBarrier {
-				panic(err)
-			}
-			wg.Done()
-		}()
-	}
-
-	wg.Wait()
-	checkBarrier(t, b, n+1, false)
-}
-
 func TestAwaitErrorInActionThenReset(t *testing.T) {
 	n := 100 // goroutines count
 	ctx := context.Background()
@@ -307,14 +281,6 @@ func TestAwaitErrorInActionThenReset(t *testing.T) {
 	if b.Await(ctx) != ErrBrokenBarrier {
 		t.Error("call await on broken barrier must return ErrBrokenBarrier")
 	}
-
-	// do reset broken barrier
-	b.Reset()
-	if b.IsBroken() {
-		t.Error("barrier must not be broken after reset")
-	}
-
-	checkBarrier(t, b, n, false)
 }
 
 func TestAwaitTooMuchGoroutines(t *testing.T) {
