@@ -136,7 +136,7 @@ func (b *barrier) SetAction(action func() error) {
 	b.lock.Unlock()
 }
 
-func (b *barrier) Wait(ctx context.Context) error {
+func (b *barrier) Wait(ctx context.Context) (err error) {
 	b.lock.Lock()
 	count, success, broken := b.round.meetNewComer()
 	b.lock.Unlock()
@@ -165,22 +165,18 @@ func (b *barrier) Wait(ctx context.Context) error {
 			return fmt.Errorf("barrier is broken: %w", ctx.Err())
 		}
 	} else {
-		select {
-		case <-broken:
-			return ErrBrokenByOther
-		default:
-			// we are the last one,
-			// run the barrier action
-			// and
-			// reset the barrier
-			if b.action != nil {
-				b.action()
-			}
+		// TODO: 思考一下，需要改成 内部的方法吗？
+		if b.IsBroken() {
+			// 不能直接返回错误，需要下面还有 restRound 的工作要做
+			err = ErrBrokenByOther
+		}
+		if b.action != nil {
+			b.action()
 		}
 		// 无论成功与否
 		// 最后达到的 goroutine 负责重置 barrier
 		b.resetRound()
-		return nil
+		return
 	}
 }
 
@@ -198,6 +194,11 @@ func (b *barrier) Break() {
 	b.breakRound()
 
 	if count == b.participants {
+		if b.action != nil {
+			b.action()
+		}
+		// 无论成功与否
+		// 最后达到的 goroutine 负责重置 barrier
 		b.resetRound()
 	}
 }
