@@ -7,56 +7,6 @@ import (
 	"sync"
 )
 
-// Barrier is a synchronizer that allows a set of goroutines to wait for each other
-// to reach a common execution point, also called a barrier.
-// Barriers are useful in programs involving a fixed sized party of goroutines
-// that must occasionally wait for each other.
-// The barrier is called cyclic because it can be re-used after the waiting goroutines are released.
-// A Barrier supports an optional Runnable command that is run once per barrier point,
-// after the last goroutine in the party arrives, but before any goroutines are released.
-// This barrier action is useful for updating shared-state before any of the parties continue.
-// Barrier 同步原语用于多个 goroutine 相互等待。
-// 即多个 goroutine 在同一个汇合点相互等待，直到全部到齐后，再一起继续执行的情况。
-// NOTICE: 并发的 Barrier.SignalAndWait() 的 goroutine 数量一定要和 Barrier.GetParticipants() 相等。
-type Barrier interface {
-	// Wait waits until all parties have invoked await on this barrier.
-	// 1. If the barrier is reset while any goroutine is waiting, or if the barrier is broken when await is invoked,
-	// 1. 如果 reset 的时候，有 goroutine 在 wait。或者，屏障 broke 时候，wait 已经被请求。
-	// or while any goroutine is waiting, then ErrBrokenBarrier is returned.
-	// 或 有 goroutine 正在 wait，会返回 ErrBrokenBarrier。
-	// 2. If any goroutine is interrupted by ctx.Done() while waiting, then all other waiting goroutines
-	// 2. 如果有 goroutine 被 ctx.Done 中断，所有其他等待中的 goroutine
-	// will return ErrBrokenBarrier and the barrier is placed in the broken state.
-	// 会返回 ErrBrokenBarrier 错误，barrier 会停在 broken 状态。
-	// 3. If the current goroutine is the last goroutine to arrive, and a non-nil barrier action was supplied in the constructor,
-	// 3. 如果本 goroutine 是最后到达的，且 action 不为空。
-	// then the current goroutine runs the action before allowing the other goroutines to continue.
-	// 那就由这个 goroutine 来执行 action，然后所有其他的 goroutine 才能继续。
-	// 4. If an error occurs during the barrier action then that error will be returned and the barrier is placed in the broken state.
-	// 4. 如果 action 执行过程中发生错误，那个 goroutine 会返回错误，
-	// 5. 如果 action != nil, 最后一个 Await 的 goroutine 会执行 action。
-	// Await(ctx context.Context) error
-
-	// Wait After this goroutine has got ready
-	// In waiting, the goroutine can be canceled by context.Context
-	Wait(ctx context.Context) error
-
-	// BrokeAndSignal used when a goroutine can not prepare the need stuff finally
-	// goroutine has to broke the barrier the tell the others.
-	//
-	// TODO: 添加此处内容
-	// 对于一个 goroutine 来说， 要么 wait; 要么 broke
-	Break()
-
-	// IsBroken queries if this barrier is in a broken state.
-	// Returns true if one or more parties broke out of this barrier due to interruption by ctx.Done() or the last reset,
-	// or a barrier action failed due to an error;
-	// false otherwise.
-	IsBroken() bool
-
-	SetAction(func() error) Barrier // TODO: 删除此处 error
-}
-
 var (
 	// ErrBroken will be returned by all goroutines called Barrier.Wait() if a
 	// goroutine called Barrier.Break()
@@ -64,11 +14,43 @@ var (
 	ErrBroken = errors.New("barrier is broken by other goroutine")
 )
 
+// Barrier is a synchronizer that allows a set of goroutines to wait for each other
+// to reach a common execution point, also called a barrier.
+// Barriers are useful in programs involving a fixed sized party of goroutines
+// that must occasionally wait for each other.
+// The barrier is cyclic because it can be re-used after the waiting goroutines are released.
+// A Barrier supports an optional Runnable command that is run once per barrier point,
+// after the last goroutine in the party arrives, but before any goroutines are released.
+// This barrier action is useful for updating shared-state before any of the parties continue.
+type Barrier interface {
+	// Wait until all participants have invoked wait on this barrier.
+	// If another goroutine breaks the barrier, it will return ErrBroken
+	// else return nil.
+	Wait(ctx context.Context) error
+
+	// Break is `Wait` with unfinished job.
+	// The code of use `Break` is like
+	// if ok := doJob(); ok {
+	//     b.Wait()
+	// } else {
+	//     b.Break()
+	// }
+	Break()
+
+	// IsBroken returns true if this barrier is broken.
+	IsBroken() bool
+
+	// SetAction set an action will be execute after all participants
+	// arrived the barrier.
+	// Even the barrier is broken, the action will also be executed.
+	SetAction(func()) Barrier
+}
+
 // barrier implements Barrier interface
 type barrier struct {
 	participants int
 	lock         sync.RWMutex
-	action       func() error // TODO: 删除 error
+	action       func()
 	// every round has a new round
 	round *round
 }
@@ -122,7 +104,7 @@ func New(participants int) Barrier {
 // action will be execute by
 // the last **Wait** goroutine
 // OR the first **Break** goroutine
-func (b *barrier) SetAction(action func() error) Barrier {
+func (b *barrier) SetAction(action func()) Barrier {
 	b.lock.Lock()
 	b.action = action
 	b.lock.Unlock()
@@ -193,79 +175,6 @@ func (b *barrier) Break() {
 		// 无论成功与否
 		// 最后达到的 goroutine 负责重置 barrier
 		b.resetRound()
-	}
-}
-
-func (b *barrier) Await(ctx context.Context) error {
-	var doneCh <-chan struct{}
-	if ctx != nil {
-		doneCh = ctx.Done()
-	}
-
-	// check if context is done
-	select {
-	case <-doneCh:
-		// TODO: 为什么这里不需要 breakBarrier（）
-		return ctx.Err()
-	default:
-	}
-
-	b.lock.Lock()
-
-	// check if broken
-	if b.round.isBroken {
-		b.lock.Unlock()
-		return ErrBroken
-	}
-
-	// increment count of waiters
-	b.round.count++
-
-	// saving in local variables to prevent race
-	waitCh := b.round.success
-	brokeCh := b.round.broken
-	count := b.round.count
-
-	b.lock.Unlock()
-
-	// TODO: 有可能 > 吗？
-	// 有可能的，
-	// 当并发的 Barrier.Await() 的 goroutine 数量大于 Barrier.GetParticipants() 时候，
-	// 虽然 count++ 是在临界区内，但是 if 分支语句不在呀。
-	// count = participants 刚刚 unlock 后，还没有到达 if 前。
-	// 另一个 goroutine 进行了 count++ 运算
-	// 就会导致 count > participants 成立
-	if count > b.participants {
-		panic("Barrier.Await is called more than count of parties")
-	}
-
-	// barrier 的核心逻辑
-	if count < b.participants {
-		// wait other parties
-		select {
-		case <-waitCh:
-			return nil
-		case <-brokeCh:
-			return ErrBroken
-		case <-doneCh:
-			b.breakBarrier(true)
-			return ctx.Err()
-		}
-	} else {
-		// we are the last one,
-		// run the barrier action
-		// and
-		// reset the barrier
-		if b.action != nil {
-			err := b.action()
-			if err != nil {
-				b.breakBarrier(true) // TODO: 简化此处逻辑
-				// b.reset(true)
-				return err
-			}
-		}
-		b.reset(true)
-		return nil
 	}
 }
 
