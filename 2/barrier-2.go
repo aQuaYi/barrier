@@ -7,8 +7,6 @@ import (
 	"sync"
 )
 
-var ()
-
 // Barrier is a synchronizer that allows a set of goroutines to wait for each other
 // to reach a common execution point, also called a barrier.
 // Barriers are useful in programs involving a fixed sized party of goroutines
@@ -21,7 +19,7 @@ var ()
 // 即多个 goroutine 在同一个汇合点相互等待，直到全部到齐后，再一起继续执行的情况。
 // NOTICE: 并发的 Barrier.SignalAndWait() 的 goroutine 数量一定要和 Barrier.GetParticipants() 相等。
 type Barrier interface {
-	// Await waits until all parties have invoked await on this barrier.
+	// Wait waits until all parties have invoked await on this barrier.
 	// 1. If the barrier is reset while any goroutine is waiting, or if the barrier is broken when await is invoked,
 	// 1. 如果 reset 的时候，有 goroutine 在 wait。或者，屏障 broke 时候，wait 已经被请求。
 	// or while any goroutine is waiting, then ErrBrokenBarrier is returned.
@@ -37,7 +35,7 @@ type Barrier interface {
 	// 4. If an error occurs during the barrier action then that error will be returned and the barrier is placed in the broken state.
 	// 4. 如果 action 执行过程中发生错误，那个 goroutine 会返回错误，
 	// 5. 如果 action != nil, 最后一个 Await 的 goroutine 会执行 action。
-	Await(ctx context.Context) error
+	// Await(ctx context.Context) error
 
 	// Wait After this goroutine has got ready
 	// In waiting, the goroutine can be canceled by context.Context
@@ -56,26 +54,29 @@ type Barrier interface {
 	// false otherwise.
 	IsBroken() bool
 
-	SetAction(func() error) // TODO: 删除此处 error
+	SetAction(func() error) Barrier // TODO: 删除此处 error
 }
 
 var (
-	// ErrBrokenBarrier error used when a goroutine tries to wait upon a barrier that is in a broken state,
-	// or which enters the broken state while the goroutine is waiting.
-	// TODO: 自定义错误类型
-	ErrBrokenBarrier error
-
-	// ErrBrokenByOther used when some goroutine wait early has canceled by its context.
-	// the barrier is broken.
-	// the goroutine wait lately, will return this error at once.
-	ErrBrokenByOther = errors.New("barrier is broken by other goroutine")
+	// ErrBroken will be returned by all goroutines called Barrier.Wait() if a
+	// goroutine called Barrier.Break()
+	// The goroutine wait lately, will return this error at once.
+	ErrBroken = errors.New("barrier is broken by other goroutine")
 )
+
+// barrier implements Barrier interface
+type barrier struct {
+	participants int
+	lock         sync.RWMutex
+	action       func() error // TODO: 删除 error
+	// every round has a new round
+	round *round
+}
 
 // round is a cycle of using barrier
 // every round has only two results: success or broken
 // success means everything is ok
 // otherwise the round is broken
-// NOTICE: visit round need lock
 type round struct {
 	// this barrier round has broken
 	isBroken bool
@@ -105,15 +106,6 @@ func (r *round) meetNewComer() (count int, success, broken chan struct{}) {
 	return
 }
 
-// barrier implements Barrier interface
-type barrier struct {
-	participants int
-	lock         sync.RWMutex
-	action       func() error // TODO: 删除 error
-	// every round has a new round
-	round *round
-}
-
 // New initializes a new instance of the Barrier, specifying the number of parties.
 func New(participants int) Barrier {
 	if participants <= 0 {
@@ -130,10 +122,11 @@ func New(participants int) Barrier {
 // action will be execute by
 // the last **Wait** goroutine
 // OR the first **Break** goroutine
-func (b *barrier) SetAction(action func() error) {
+func (b *barrier) SetAction(action func() error) Barrier {
 	b.lock.Lock()
 	b.action = action
 	b.lock.Unlock()
+	return b
 }
 
 func (b *barrier) Wait(ctx context.Context) (err error) {
@@ -157,7 +150,7 @@ func (b *barrier) Wait(ctx context.Context) (err error) {
 		case <-success:
 			return nil
 		case <-broken:
-			return ErrBrokenByOther
+			return ErrBroken
 		case <-ctx.Done():
 			// TODO: 修改逻辑
 			b.breakRound()
@@ -168,7 +161,7 @@ func (b *barrier) Wait(ctx context.Context) (err error) {
 		// TODO: 思考一下，需要改成 内部的方法吗？
 		if b.IsBroken() {
 			// 不能直接返回错误，需要下面还有 restRound 的工作要做
-			err = ErrBrokenByOther
+			err = ErrBroken
 		}
 		if b.action != nil {
 			b.action()
@@ -222,7 +215,7 @@ func (b *barrier) Await(ctx context.Context) error {
 	// check if broken
 	if b.round.isBroken {
 		b.lock.Unlock()
-		return ErrBrokenBarrier
+		return ErrBroken
 	}
 
 	// increment count of waiters
@@ -253,7 +246,7 @@ func (b *barrier) Await(ctx context.Context) error {
 		case <-waitCh:
 			return nil
 		case <-brokeCh:
-			return ErrBrokenBarrier
+			return ErrBroken
 		case <-doneCh:
 			b.breakBarrier(true)
 			return ctx.Err()
