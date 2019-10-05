@@ -140,7 +140,6 @@ func (b *barrier) Wait(ctx context.Context) (err error) {
 			return fmt.Errorf("barrier is broken: %w", ctx.Err())
 		}
 	} else {
-		// TODO: 思考一下，需要改成 内部的方法吗？
 		if b.IsBroken() {
 			// 不能直接返回错误，需要下面还有 restRound 的工作要做
 			err = ErrBroken
@@ -155,7 +154,6 @@ func (b *barrier) Wait(ctx context.Context) (err error) {
 	}
 }
 
-// TODO: 完成 Break 方法
 func (b *barrier) Break() {
 	// TODO: 把 round.meetNewComer 改写成 b.meetNewComer
 	b.lock.Lock()

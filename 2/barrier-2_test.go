@@ -6,7 +6,130 @@ import (
 	"testing"
 
 	"github.com/marusama/cyclicbarrier"
+	. "github.com/smartystreets/goconvey/convey"
 )
+
+func TestAction(t *testing.T) {
+	var b *barrier
+
+	Convey("如果 Barrier 设置了 Action", t, func() {
+		count := 0
+		b = New(3).SetAction(func() {
+			count = 1
+		}).(*barrier)
+		b.round.count = 2
+
+		Convey("当最后一个参与值 Wait 的时候", func() {
+			b.Wait(context.TODO())
+			Convey("Action 会被执行", func() {
+				So(count, ShouldEqual, 1)
+			})
+		})
+
+		Convey("当最后一个参与者 Break 的时候", func() {
+			b.Break()
+			Convey("Action 会被执行", func() {
+				So(count, ShouldEqual, 1)
+			})
+
+		})
+
+	})
+
+}
+
+func goWait(b Barrier) {
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		wg.Done()
+		b.Wait(context.TODO())
+	}()
+	wg.Wait()
+	return
+}
+
+func TestBarrierStatus(t *testing.T) {
+	Convey("假设 Barrier 有 3 个参与者", t, func() {
+		b := New(3)
+		status := 0
+		b.SetAction(func() {
+			if b.IsBroken() {
+				status--
+			} else {
+				status++
+			}
+		})
+
+		Convey("如果第 1 个参与者执行了 Wait", func() {
+			goWait(b)
+			Convey("第 2 个参与者执行了 Wait", func() {
+				goWait(b)
+				Convey("第 3 个参与者执行了 Wait", func() {
+					goWait(b)
+					So(status, ShouldEqual, 1)
+				})
+				Convey("第 3 个参与者执行了 Break", func() {
+					b.Break()
+					So(status, ShouldEqual, -1)
+				})
+			})
+
+			Convey("第 2 个参与者执行了 Break", func() {
+				b.Break()
+				Convey("第 3 个参与者执行了 Wait", func() {
+					err := b.Wait(context.TODO())
+					So(err, ShouldEqual, ErrBroken)
+					So(status, ShouldEqual, -1)
+				})
+				Convey("第 3 个参与者执行了 Break", func() {
+					err := b.Wait(context.TODO())
+					So(err, ShouldEqual, ErrBroken)
+					So(status, ShouldEqual, -1)
+				})
+			})
+		})
+
+		Convey("如果第 1 个参与者执行了 Break", func() {
+			b.Break()
+
+			Convey("第 2 个参与者执行了 Wait", func() {
+				err := b.Wait(context.TODO())
+				So(err, ShouldEqual, ErrBroken)
+
+				Convey("第 3 个参与者执行了 Wait", func() {
+					err := b.Wait(context.TODO())
+					So(err, ShouldEqual, ErrBroken)
+					So(status, ShouldEqual, -1)
+				})
+
+				Convey("第 3 个参与者执行了 Break", func() {
+					b.Break()
+					So(status, ShouldEqual, -1)
+				})
+			})
+
+			Convey("第 2 个参与者执行了 Break", func() {
+				b.Break()
+
+				Convey("第 3 个参与者执行了 Wait", func() {
+					err := b.Wait(context.TODO())
+					So(err, ShouldEqual, ErrBroken)
+					So(status, ShouldEqual, -1)
+				})
+
+				Convey("第 3 个参与者执行了 Break", func() {
+					b.Break()
+					So(status, ShouldEqual, -1)
+				})
+
+			})
+
+		})
+
+	})
+
+}
 
 func oneRound(parties, cycles int, wait func(context.Context) error) {
 	var wg sync.WaitGroup
