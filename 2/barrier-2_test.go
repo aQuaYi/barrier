@@ -38,6 +38,7 @@ func TestAction(t *testing.T) {
 
 }
 
+// goWait make sure b.Wait is waiting
 func goWait(b Barrier) {
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -63,12 +64,18 @@ func TestBarrierStatus(t *testing.T) {
 
 		Convey("如果第 1 个参与者执行了 Wait", func() {
 			goWait(b)
+			So(status, ShouldEqual, 0)
+
 			Convey("第 2 个参与者执行了 Wait", func() {
 				goWait(b)
+				So(status, ShouldEqual, 0)
+
 				Convey("第 3 个参与者执行了 Wait", func() {
-					goWait(b)
+					err := b.Wait(context.TODO())
+					So(err, ShouldBeNil)
 					So(status, ShouldEqual, 1)
 				})
+
 				Convey("第 3 个参与者执行了 Break", func() {
 					b.Break()
 					So(status, ShouldEqual, -1)
@@ -77,11 +84,14 @@ func TestBarrierStatus(t *testing.T) {
 
 			Convey("第 2 个参与者执行了 Break", func() {
 				b.Break()
+				So(status, ShouldEqual, 0)
+
 				Convey("第 3 个参与者执行了 Wait", func() {
 					err := b.Wait(context.TODO())
 					So(err, ShouldEqual, ErrBroken)
 					So(status, ShouldEqual, -1)
 				})
+
 				Convey("第 3 个参与者执行了 Break", func() {
 					err := b.Wait(context.TODO())
 					So(err, ShouldEqual, ErrBroken)
@@ -92,10 +102,12 @@ func TestBarrierStatus(t *testing.T) {
 
 		Convey("如果第 1 个参与者执行了 Break", func() {
 			b.Break()
+			So(status, ShouldEqual, 0)
 
 			Convey("第 2 个参与者执行了 Wait", func() {
 				err := b.Wait(context.TODO())
 				So(err, ShouldEqual, ErrBroken)
+				So(status, ShouldEqual, 0)
 
 				Convey("第 3 个参与者执行了 Wait", func() {
 					err := b.Wait(context.TODO())
@@ -111,6 +123,7 @@ func TestBarrierStatus(t *testing.T) {
 
 			Convey("第 2 个参与者执行了 Break", func() {
 				b.Break()
+				So(status, ShouldEqual, 0)
 
 				Convey("第 3 个参与者执行了 Wait", func() {
 					err := b.Wait(context.TODO())
@@ -122,13 +135,9 @@ func TestBarrierStatus(t *testing.T) {
 					b.Break()
 					So(status, ShouldEqual, -1)
 				})
-
 			})
-
 		})
-
 	})
-
 }
 
 func oneRound(parties, cycles int, wait func(context.Context) error) {

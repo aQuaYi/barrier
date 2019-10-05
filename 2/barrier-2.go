@@ -186,19 +186,6 @@ func (b *barrier) breakRound() {
 	}
 }
 
-// TODO: 删除此处内容
-func (b *barrier) breakBarrier(needLock bool) {
-	if needLock {
-		b.lock.Lock()
-		defer b.lock.Unlock()
-	}
-	if !b.round.isBroken {
-		b.round.isBroken = true
-		// broadcast
-		close(b.round.broken)
-	}
-}
-
 func (b *barrier) resetRound() {
 	b.lock.Lock()
 	defer b.lock.Unlock()
@@ -212,24 +199,10 @@ func (b *barrier) resetRound() {
 	b.round = newRound()
 }
 
-// broadcast all that everyone is waiting.
-func (b *barrier) broadcast() {
-	close(b.round.success)
-}
-
-// TODO: 删除此处内容
-func (b *barrier) reset(safe bool) {
-	b.lock.Lock()
-	defer b.lock.Unlock()
-	if safe {
-		// broadcast to pass waiting goroutines
-		close(b.round.success)
-	} else if b.round.count > 0 {
-		b.breakBarrier(false)
-	}
-	// create new round
-	b.round = newRound()
-}
+// // broadcast all that everyone is waiting.
+// func (b *barrier) broadcast() {
+// 	close(b.round.success)
+// }
 
 func (b *barrier) IsBroken() bool {
 	b.lock.RLock()
