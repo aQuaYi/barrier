@@ -7,7 +7,11 @@
 [![License](https://img.shields.io/github/license/mashape/apistatus.svg?maxAge=2592000)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.13+-blue.svg)](https://golang.google.cn)
 
-`barrier` 是一种基本的同步原语，当多个 `goroutine` 需要相互等待，以便到达同一个汇合点的时候，特别有用。可以看看[这道题](https://colobu.com/2019/07/23/concurrent-problem-h2o-factory/)是如何使用 `barrier` 的。
+`barrier` 是一种基本的同步原语，当多个 `goroutine` 需要相互等待，同时到达同一个汇合点的时候，特别有用。
+
+- [内容介绍](#%e5%86%85%e5%ae%b9%e4%bb%8b%e7%bb%8d)
+- [使用方法](#%e4%bd%bf%e7%94%a8%e6%96%b9%e6%b3%95)
+- [简单例子](#%e7%ae%80%e5%8d%95%e4%be%8b%e5%ad%90)
 
 ## 内容介绍
 
@@ -41,7 +45,7 @@ Wait
 b.Wait(ctx)    // await other parties
 ```
 
-### Simple example
+## 简单例子
 
 ```go
 // create a barrier for 10 parties with an action that increments counter
