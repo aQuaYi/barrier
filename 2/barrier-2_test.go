@@ -191,18 +191,36 @@ func TestTooMuchWaiting(t *testing.T) {
 	})
 }
 
-// func TestContextCancel(t *testing.T) {
-// 	Convey("Barrier 中有一个 goroutine 已经 waiting", t, func() {
-// 		b := New(2)
-// 		// ctx, cancel := context.WithCancel(context.Background())
-// 		// b.Wait(ctx)
-// 		Convey("在 Cancel 之前", func() {
-// 			So(func() {
-// 				b.Wait(context.TODO())
-// 			}, ShouldPanicWith, tooMuchWaiting)
-// 		})
-// 	})
-// }
+func TestContextCancel(t *testing.T) {
+	Convey("Barrier 中有一个 goroutine 已经 waiting", t, func() {
+		b := New(2)
+		ctx, cancel := context.WithCancel(context.Background())
+		var err error
+		var waitBefore, waitAfter sync.WaitGroup
+		waitBefore.Add(1)
+		waitAfter.Add(1)
+		go func() {
+			waitBefore.Done()
+			err = b.Wait(ctx)
+			waitAfter.Done()
+		}()
+
+		waitBefore.Wait()
+
+		Convey("在 Cancel 之前，b 不是 broken", func() {
+			So(err, ShouldBeNil)
+			So(b.IsBroken(), ShouldBeFalse)
+		})
+
+		cancel()
+		waitAfter.Wait()
+
+		Convey("在 Cancel 之后，b 是 broken", func() {
+			So(err.Error(), ShouldEqual, "barrier is broken: context canceled")
+			So(b.IsBroken(), ShouldBeTrue)
+		})
+	})
+}
 
 // below is benchmark
 
