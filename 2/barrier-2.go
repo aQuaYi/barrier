@@ -7,6 +7,11 @@ import (
 	"sync"
 )
 
+const (
+	nonpositiveParticipants = "participants is NOT positive"
+	tooMuchWaiting          = "goroutines calling b.Wait() is more than b.participants. Make sure they are equal."
+)
+
 var (
 	// ErrBroken will be returned by all goroutines called Barrier.Wait() if a
 	// goroutine called Barrier.Break()
@@ -14,14 +19,17 @@ var (
 	ErrBroken = errors.New("barrier is broken by other goroutine")
 )
 
-// Barrier is a synchronizer that allows a set of goroutines to wait for each other
-// to reach a common execution point, also called a barrier.
-// Barriers are useful in programs involving a fixed sized party of goroutines
-// that must occasionally wait for each other.
-// The barrier is cyclic because it can be re-used after the waiting goroutines are released.
-// A Barrier supports an optional Runnable command that is run once per barrier point,
-// after the last goroutine in the party arrives, but before any goroutines are released.
-// This barrier action is useful for updating shared-state before any of the parties continue.
+// Barrier is a synchronizer that allows a set of goroutines
+// to wait for each other to reach a common execution point,
+// also called a barrier.
+// Barriers are useful in programs involving a fixed sized party of
+// goroutines that must occasionally wait for each other.
+// The barrier can be re-used after the waiting goroutines are released.
+// A Barrier supports an optional Runnable command
+// that is run once per barrier point, after the last goroutine in the party arrives,
+// but before any goroutines are released.
+// This barrier action is useful for updating
+// shared-state before any of the parties continue.
 type Barrier interface {
 	// Wait until all participants have invoked wait on this barrier.
 	// If another goroutine breaks the barrier, it will return ErrBroken
@@ -37,7 +45,7 @@ type Barrier interface {
 	// }
 	Break()
 
-	// IsBroken returns true if this barrier is broken.
+	// IsBroken returns true if this round barrier is broken.
 	IsBroken() bool
 
 	// SetAction set an action will be execute after all participants
@@ -46,29 +54,33 @@ type Barrier interface {
 	SetAction(func()) Barrier
 }
 
+// New initializes a new instance of the Barrier, specifying the number of parties.
+func New(participants int) Barrier {
+	if participants <= 0 {
+		panic(nonpositiveParticipants)
+	}
+	return &barrier{
+		participants: participants,
+		lock:         sync.RWMutex{},
+		round:        newRound(),
+	}
+}
+
 // barrier implements Barrier interface
 type barrier struct {
 	participants int
 	lock         sync.RWMutex
 	action       func()
-	// every round has a new round
-	round *round
+	round        *round // every round has a new round
 }
 
 // round is a cycle of using barrier
-// every round has only two results: success or broken
-// success means everything is ok
-// otherwise the round is broken
+// if any goroutine call Barrier.Break, this round is Broken
 type round struct {
-	// this barrier round has broken
 	isBroken bool
-	// count of goroutines has arrived barrier
-	count int
-	// broadcast success result when close(success)
-	success chan struct{}
-	// broadcast broken status to waiting goroutine when close(borken)
-	// this round is broken status after close(broken)
-	broken chan struct{}
+	count    int           // count of goroutines has arrived barrier
+	success  chan struct{} // broadcast success result using close(success)
+	broken   chan struct{} // broadcast broken status using close(borken)
 }
 
 func newRound() *round {
@@ -78,32 +90,55 @@ func newRound() *round {
 	}
 }
 
-// NOTICE: used in lock
-// save returns in local variables to prevent race
-func (r *round) meetNewComer() (count int, success, broken chan struct{}) {
-	r.count++
-	count = r.count
-	success = r.success
-	broken = r.broken
+func (b *barrier) Wait(ctx context.Context) (err error) {
+	count, success, broken := b.newComer()
+	if count < b.participants {
+		// wait other participants
+		select {
+		case <-success:
+			return nil
+		case <-broken:
+			return ErrBroken
+		case <-ctx.Done():
+			b.breakRound()
+			return fmt.Errorf("barrier is broken: %w", ctx.Err())
+		}
+	}
+	if count == b.participants {
+		if b.IsBroken() {
+			err = ErrBroken
+		}
+		b.lastArrived()
+	}
 	return
 }
 
-// New initializes a new instance of the Barrier, specifying the number of parties.
-func New(participants int) Barrier {
-	if participants <= 0 {
-		panic("parties must be positive number")
+func (b *barrier) Break() {
+	count, _, _ := b.newComer()
+	b.breakRound()
+	if count == b.participants {
+		b.lastArrived()
 	}
-	return &barrier{
-		participants: participants,
-		lock:         sync.RWMutex{},
-		round:        newRound(),
+}
+
+// lastArrived to do action and reset
+func (b *barrier) lastArrived() {
+	if b.action != nil {
+		b.action()
 	}
+	b.resetRound()
+}
+
+func (b *barrier) IsBroken() (res bool) {
+	b.lock.RLock()
+	res = b.round.isBroken
+	b.lock.RUnlock()
+	return
 }
 
 // SetAction if you need
 // action will be execute by
-// the last **Wait** goroutine
-// OR the first **Break** goroutine
+// the last **arrived** goroutine
 func (b *barrier) SetAction(action func()) Barrier {
 	b.lock.Lock()
 	b.action = action
@@ -111,11 +146,14 @@ func (b *barrier) SetAction(action func()) Barrier {
 	return b
 }
 
-func (b *barrier) Wait(ctx context.Context) (err error) {
+// meetNewComer save returns in local variables to prevent race
+func (b *barrier) newComer() (count int, success, broken chan struct{}) {
 	b.lock.Lock()
-	count, success, broken := b.round.meetNewComer()
+	b.round.count++
+	count = b.round.count
+	success = b.round.success
+	broken = b.round.broken
 	b.lock.Unlock()
-
 	// 如果并发的 b.Wait() 的 goroutines 的数量
 	// 大于 b.participants 的话，
 	// 虽然 count++ 是在临界区内，但是 if 分支语句不在呀。
@@ -123,89 +161,25 @@ func (b *barrier) Wait(ctx context.Context) (err error) {
 	// 另一个 goroutine 进行了 count++ 运算
 	// 就会导致 count > participants 成立
 	if count > b.participants {
-		panic("goroutines calling b.Wait() is more than b.participants. Make sure they are equal.")
+		panic(tooMuchWaiting)
 	}
-
-	if count < b.participants {
-		// wait other parties
-		select {
-		case <-success:
-			return nil
-		case <-broken:
-			return ErrBroken
-		case <-ctx.Done():
-			// TODO: 修改逻辑
-			b.breakRound()
-			// return ctx.Err()
-			return fmt.Errorf("barrier is broken: %w", ctx.Err())
-		}
-	} else {
-		if b.IsBroken() {
-			// 不能直接返回错误，需要下面还有 restRound 的工作要做
-			err = ErrBroken
-		}
-		if b.action != nil {
-			b.action()
-		}
-		// 无论成功与否
-		// 最后达到的 goroutine 负责重置 barrier
-		b.resetRound()
-		return
-	}
-}
-
-func (b *barrier) Break() {
-	// TODO: 把 round.meetNewComer 改写成 b.meetNewComer
-	b.lock.Lock()
-	count, _, _ := b.round.meetNewComer()
-	b.lock.Unlock()
-
-	if count > b.participants {
-		panic("goroutines calling b.Wait() is more than b.participants. Make sure they are equal.")
-	}
-
-	b.breakRound()
-
-	if count == b.participants {
-		if b.action != nil {
-			b.action()
-		}
-		// 无论成功与否
-		// 最后达到的 goroutine 负责重置 barrier
-		b.resetRound()
-	}
+	return
 }
 
 func (b *barrier) breakRound() {
 	b.lock.Lock()
-	defer b.lock.Unlock()
 	if !b.round.isBroken {
 		b.round.isBroken = true
-		// broadcast
-		close(b.round.broken)
+		close(b.round.broken) // broadcast to waiting goroutines
 	}
+	b.lock.Unlock()
 }
 
 func (b *barrier) resetRound() {
 	b.lock.Lock()
-	defer b.lock.Unlock()
 	if !b.round.isBroken {
-		// broadcast to pass waiting goroutines
-		close(b.round.success)
-		// round.success 和 round.broken
-		// 这两个 channel 总是成对出现的
-		// ！isBroken 才需要 close（success） 来通知大家。
+		close(b.round.success) // broadcast to waiting goroutines
 	}
 	b.round = newRound()
-}
-
-// // broadcast all that everyone is waiting.
-// func (b *barrier) broadcast() {
-// 	close(b.round.success)
-// }
-
-func (b *barrier) IsBroken() bool {
-	b.lock.RLock()
-	defer b.lock.RUnlock()
-	return b.round.isBroken
+	b.lock.Unlock()
 }

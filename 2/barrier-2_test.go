@@ -2,41 +2,13 @@ package barrier
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 
 	"github.com/marusama/cyclicbarrier"
 	. "github.com/smartystreets/goconvey/convey"
 )
-
-func TestAction(t *testing.T) {
-	var b *barrier
-
-	Convey("如果 Barrier 设置了 Action", t, func() {
-		count := 0
-		b = New(3).SetAction(func() {
-			count = 1
-		}).(*barrier)
-		b.round.count = 2
-
-		Convey("当最后一个参与值 Wait 的时候", func() {
-			b.Wait(context.TODO())
-			Convey("Action 会被执行", func() {
-				So(count, ShouldEqual, 1)
-			})
-		})
-
-		Convey("当最后一个参与者 Break 的时候", func() {
-			b.Break()
-			Convey("Action 会被执行", func() {
-				So(count, ShouldEqual, 1)
-			})
-
-		})
-
-	})
-
-}
 
 // goWait make sure b.Wait is waiting
 func goWait(b Barrier) {
@@ -48,6 +20,70 @@ func goWait(b Barrier) {
 	}()
 	wg.Wait()
 	return
+}
+
+func TestNew(t *testing.T) {
+	Convey("如果想要新建一个 Barrier", t, func() {
+
+		Convey("当 participants 是 0 的时候", func() {
+			Convey("就会 panic", func() {
+				So(func() {
+					New(0)
+				}, ShouldPanicWith, nonpositiveParticipants)
+			})
+		})
+
+		Convey("当 participants 是 -1 的时候", func() {
+			Convey("也会 panic", func() {
+				So(func() {
+					New(-1)
+				}, ShouldPanicWith, nonpositiveParticipants)
+			})
+		})
+
+		Convey("当 participants 是 1 的时候", func() {
+			Convey("也不会 panic", func() {
+				So(func() {
+					New(1)
+				}, ShouldNotPanicWith, nonpositiveParticipants)
+			})
+
+		})
+	})
+}
+
+func TestAction(t *testing.T) {
+	participants := 5
+	Convey("如果 Barrier 设置了 Action", t, func() {
+		status := 0
+		b := New(participants).SetAction(func() {
+			status = 1
+		})
+
+		Convey("除了最后一个参与者，都已经 Wait 了", func() {
+			for i := 1; i < participants; i++ {
+				goWait(b)
+				s := fmt.Sprintf("已经执行了 %d 个 Wait， ", i)
+				Convey(s+"Status 依然应该为 0", func() {
+					So(status, ShouldEqual, 0)
+				})
+			}
+
+			Convey("当最后一个参与值 Wait 的时候", func() {
+				b.Wait(context.TODO())
+				Convey("Action 会被执行, status 成为了 1", func() {
+					So(status, ShouldEqual, 1)
+				})
+			})
+
+			Convey("当最后一个参与者 Break 的时候", func() {
+				b.Break()
+				Convey("Action 会被执行, status 成为了 1", func() {
+					So(status, ShouldEqual, 1)
+				})
+			})
+		})
+	})
 }
 
 func TestBarrierStatus(t *testing.T) {
@@ -139,6 +175,36 @@ func TestBarrierStatus(t *testing.T) {
 		})
 	})
 }
+
+func TestTooMuchWaiting(t *testing.T) {
+	noSend := make(chan struct{})
+	Convey("如果所有的 participants 已经到齐了", t, func() {
+		b := New(1).SetAction(func() {
+			<-noSend
+		})
+		goWait(b)
+		Convey("再次调用 b.Wait，会触发 panic", func() {
+			So(func() {
+				b.Wait(context.TODO())
+			}, ShouldPanicWith, tooMuchWaiting)
+		})
+	})
+}
+
+// func TestContextCancel(t *testing.T) {
+// 	Convey("Barrier 中有一个 goroutine 已经 waiting", t, func() {
+// 		b := New(2)
+// 		// ctx, cancel := context.WithCancel(context.Background())
+// 		// b.Wait(ctx)
+// 		Convey("在 Cancel 之前", func() {
+// 			So(func() {
+// 				b.Wait(context.TODO())
+// 			}, ShouldPanicWith, tooMuchWaiting)
+// 		})
+// 	})
+// }
+
+// below is benchmark
 
 func oneRound(parties, cycles int, wait func(context.Context) error) {
 	var wg sync.WaitGroup
