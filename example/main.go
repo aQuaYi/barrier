@@ -3,41 +3,37 @@ package main
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"sync"
 	"time"
 
-	"github.com/marusama/cyclicbarrier"
+	"github.com/aQuaYi/barrier"
 )
 
 func main() {
-	// create a barrier for 10 parties with an action that increments counter
-	// this action will be called each time when all goroutines reach the barrier
+	participants := 5
+	round := 3
+
 	count := 0
-	b := cyclicbarrier.NewWithAction(10, func() error {
+	b := barrier.New(participants).SetAction(func() {
 		count++
-		return nil
+		fmt.Printf("\tcount: %d\n", count)
 	})
 
-	wg := sync.WaitGroup{}
-	for i := 0; i < 10; i++ { // create 10 goroutines (the same count as barrier parties)
-		wg.Add(1)
-		go func() {
-			for j := 0; j < 5; j++ {
+	var wg sync.WaitGroup
+	wg.Add(participants)
 
-				// do some hard work 5 times
-				time.Sleep(100 * time.Millisecond)
-
-				err := b.Await(context.TODO()) // ..and wait for other parties on the barrier.
-				// Last arrived goroutine will do the barrier action
-				// and then pass all other goroutines to the next round
-				if err != nil {
-					panic(err)
-				}
+	for i := 0; i < participants; i++ {
+		go func(id int) {
+			for j := 0; j < round; j++ {
+				dur := time.Duration(rand.Intn(200)) * time.Millisecond
+				time.Sleep(dur)
+				fmt.Printf("OK:%d\n", id)
+				b.Wait(context.TODO())
 			}
 			wg.Done()
-		}()
+		}(i)
 	}
 
 	wg.Wait()
-	fmt.Println(count) // cnt = 5, it means that the barrier was passed 5 times
 }
