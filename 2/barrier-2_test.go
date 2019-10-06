@@ -208,16 +208,26 @@ func TestContextCancel(t *testing.T) {
 		waitBefore.Wait()
 
 		Convey("在 Cancel 之前，b 不是 broken", func() {
-			So(err, ShouldBeNil)
 			So(b.IsBroken(), ShouldBeFalse)
+			So(err, ShouldBeNil)
+			// NOTICE: 访问 Barrier 的原始数据结构，不是一个好行为
+			bp := b.(*barrier)
+			bp.lock.RLock()
+			So(bp.round.count, ShouldEqual, 1)
+			bp.lock.RUnlock()
 		})
 
 		cancel()
 		waitAfter.Wait()
 
 		Convey("在 Cancel 之后，b 是 broken", func() {
-			So(err.Error(), ShouldEqual, "barrier is broken: context canceled")
 			So(b.IsBroken(), ShouldBeTrue)
+			So(err.Error(), ShouldEqual, "barrier is broken: context canceled")
+			// NOTICE: 访问 Barrier 的原始数据结构，不是一个好行为
+			bp := b.(*barrier)
+			bp.lock.RLock()
+			So(bp.round.count, ShouldEqual, 1)
+			bp.lock.RUnlock()
 		})
 	})
 }
