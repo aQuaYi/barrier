@@ -1,353 +1,341 @@
-package cyclicbarrier
+package barrier
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"sync"
-	"sync/atomic"
 	"testing"
-	"time"
+
+	"github.com/marusama/cyclicbarrier"
+	. "github.com/smartystreets/goconvey/convey"
 )
 
-func checkBarrier(t *testing.T, b CyclicBarrier,
-	expectedParties, expectedNumberWaiting int, expectedIsBroken bool) {
-
-	parties, numberWaiting := b.GetParties(), b.GetNumberWaiting()
-	isBroken := b.IsBroken()
-
-	if expectedParties >= 0 && parties != expectedParties {
-		t.Error("barrier must have parties = ", expectedParties, ", but has ", parties)
-	}
-	if expectedNumberWaiting >= 0 && numberWaiting != expectedNumberWaiting {
-		t.Error("barrier must have numberWaiting = ", expectedNumberWaiting, ", but has ", numberWaiting)
-	}
-	if isBroken != expectedIsBroken {
-		t.Error("barrier must have isBroken = ", expectedIsBroken, ", but has ", isBroken)
-	}
+// goWait make sure b.Wait is waiting
+func goWait(b Barrier) {
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		wg.Done()
+		b.Wait(context.TODO())
+	}()
+	wg.Wait()
+	return
 }
 
 func TestNew(t *testing.T) {
-	tests := []func(){
-		func() {
-			b := New(10)
-			checkBarrier(t, b, 10, 0, false)
-			if b.(*cyclicBarrier).barrierAction != nil {
-				t.Error("barrier have unexpected barrierAction")
-			}
-		},
-		func() {
-			defer func() {
-				if recover() == nil {
-					t.Error("Panic expected")
-				}
-			}()
-			_ = New(0)
-		},
-		func() {
-			defer func() {
-				if recover() == nil {
-					t.Error("Panic expected")
-				}
-			}()
-			_ = New(-1)
-		},
-	}
-	for _, test := range tests {
-		test()
-	}
-}
+	Convey("如果想要新建一个 Barrier", t, func() {
 
-func TestNewWithAction(t *testing.T) {
-	tests := []func(){
-		func() {
-			b := NewWithAction(10, func() error { return nil })
-			checkBarrier(t, b, 10, 0, false)
-			if b.(*cyclicBarrier).barrierAction == nil {
-				t.Error("barrier doesn't have expected barrierAction")
-			}
-		},
-		func() {
-			b := NewWithAction(10, nil)
-			checkBarrier(t, b, 10, 0, false)
-			if b.(*cyclicBarrier).barrierAction != nil {
-				t.Error("barrier have unexpected barrierAction")
-			}
-		},
-		func() {
-			defer func() {
-				if recover() == nil {
-					t.Error("Panic expected")
-				}
-			}()
-			_ = NewWithAction(0, func() error { return nil })
-		},
-		func() {
-			defer func() {
-				if recover() == nil {
-					t.Error("Panic expected")
-				}
-			}()
-			_ = NewWithAction(-1, func() error { return nil })
-		},
-	}
-	for _, test := range tests {
-		test()
-	}
-}
+		Convey("当 participants 是 0 的时候", func() {
+			Convey("就会 panic", func() {
+				So(func() {
+					New(0)
+				}, ShouldPanicWith, nonpositiveParticipants)
+			})
+		})
 
-func TestAwaitOnce(t *testing.T) {
-	n := 100 // goroutines count
-	b := New(n)
-	ctx := context.Background()
+		Convey("当 participants 是 -1 的时候", func() {
+			Convey("也会 panic", func() {
+				So(func() {
+					New(-1)
+				}, ShouldPanicWith, nonpositiveParticipants)
+			})
+		})
 
-	wg := sync.WaitGroup{}
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func() {
-			err := b.Await(ctx)
-			if err != nil {
-				panic(err)
-			}
-			wg.Done()
-		}()
-	}
+		Convey("当 participants 是 1 的时候", func() {
+			Convey("也不会 panic", func() {
+				So(func() {
+					New(1)
+				}, ShouldNotPanicWith, nonpositiveParticipants)
+			})
 
-	wg.Wait()
-	checkBarrier(t, b, n, 0, false)
-}
-
-func TestAwaitMany(t *testing.T) {
-	n := 100  // goroutines count
-	m := 1000 // inner cycle count
-	b := New(n)
-	ctx := context.Background()
-
-	wg := sync.WaitGroup{}
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func(num int) {
-			for j := 0; j < m; j++ {
-				err := b.Await(ctx)
-				if err != nil {
-					panic(err)
-				}
-			}
-			wg.Done()
-		}(i)
-	}
-
-	wg.Wait()
-	checkBarrier(t, b, n, 0, false)
-}
-
-func TestAwaitOnceCtxDone(t *testing.T) {
-	n := 100        // goroutines count
-	b := New(n + 1) // parties are more than goroutines count so all goroutines will wait
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-	var deadlineCount, brokenBarrierCount int32
-
-	wg := sync.WaitGroup{}
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func(num int) {
-			err := b.Await(ctx)
-			if err == context.DeadlineExceeded {
-				atomic.AddInt32(&deadlineCount, 1)
-			} else if err == ErrBrokenBarrier {
-				atomic.AddInt32(&brokenBarrierCount, 1)
-			} else {
-				panic("must be context.DeadlineExceeded or ErrBrokenBarrier error")
-			}
-			wg.Done()
-		}(i)
-	}
-
-	wg.Wait()
-	checkBarrier(t, b, n+1, -1, true)
-	if deadlineCount == 0 {
-		t.Error("must be more than 0 context.DeadlineExceeded errors, but found", deadlineCount)
-	}
-	if deadlineCount+brokenBarrierCount != int32(n) {
-		t.Error("must be exactly", n, "context.DeadlineExceeded and ErrBrokenBarrier errors, but found", deadlineCount+brokenBarrierCount)
-	}
-}
-
-func TestAwaitManyCtxDone(t *testing.T) {
-	n := 100 // goroutines count
-	b := New(n)
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-
-	wg := sync.WaitGroup{}
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func() {
-			for {
-				err := b.Await(ctx)
-				if err != nil {
-					if err != context.DeadlineExceeded && err != ErrBrokenBarrier {
-						panic("must be context.DeadlineExceeded or ErrBrokenBarrier error")
-					}
-					break
-				}
-			}
-			wg.Done()
-		}()
-	}
-
-	wg.Wait()
-	checkBarrier(t, b, n, -1, true)
-}
-
-func TestAwaitAction(t *testing.T) {
-	n := 100  // goroutines count
-	m := 1000 // inner cycle count
-	ctx := context.Background()
-
-	cnt := 0
-	b := NewWithAction(n, func() error {
-		cnt++
-		return nil
+		})
 	})
-
-	wg := sync.WaitGroup{}
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func() {
-			for j := 0; j < m; j++ {
-				err := b.Await(ctx)
-				if err != nil {
-					panic(err)
-				}
-			}
-			wg.Done()
-		}()
-	}
-
-	wg.Wait()
-	checkBarrier(t, b, n, 0, false)
-	if cnt != m {
-		t.Error("cnt must be equal to = ", m, ", but it's ", cnt)
-	}
 }
 
-func TestReset(t *testing.T) {
-	n := 100        // goroutines count
-	b := New(n + 1) // parties are more than goroutines count so all goroutines will wait
-	ctx := context.Background()
+func TestAction(t *testing.T) {
+	participants := 5
+	Convey("如果 Barrier 设置了 Action", t, func() {
+		status := 0
+		b := New(participants).SetAction(func() {
+			status = 1
+		})
 
-	go func() {
-		time.Sleep(30 * time.Millisecond)
-		b.Reset()
-	}()
-
-	wg := sync.WaitGroup{}
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func() {
-			err := b.Await(ctx)
-			if err != ErrBrokenBarrier {
-				panic(err)
+		Convey("除了最后一个参与者，都已经 Wait 了", func() {
+			for i := 1; i < participants; i++ {
+				goWait(b)
+				s := fmt.Sprintf("已经执行了 %d 个 Wait， ", i)
+				Convey(s+"Status 依然应该为 0", func() {
+					So(status, ShouldEqual, 0)
+				})
 			}
-			wg.Done()
-		}()
-	}
 
-	wg.Wait()
-	checkBarrier(t, b, n+1, 0, false)
-}
+			Convey("当最后一个参与值 Wait 的时候", func() {
+				b.Wait(context.TODO())
+				Convey("Action 会被执行, status 成为了 1", func() {
+					So(status, ShouldEqual, 1)
+				})
+			})
 
-func TestAwaitErrorInActionThenReset(t *testing.T) {
-	n := 100 // goroutines count
-	ctx := context.Background()
-
-	errExpected := errors.New("test error")
-
-	isActionCalled := false
-	var expectedErrCount, errBrokenBarrierCount int32
-
-	b := NewWithAction(n, func() error {
-		isActionCalled = true
-		return errExpected
+			Convey("当最后一个参与者 Break 的时候", func() {
+				b.Break()
+				Convey("Action 会被执行, status 成为了 1", func() {
+					So(status, ShouldEqual, 1)
+				})
+			})
+		})
 	})
+}
 
-	wg := sync.WaitGroup{}
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func() {
-			err := b.Await(ctx)
-			if err == errExpected {
-				atomic.AddInt32(&expectedErrCount, 1)
-			} else if err == ErrBrokenBarrier {
-				atomic.AddInt32(&errBrokenBarrierCount, 1)
+func TestBarrierStatus(t *testing.T) {
+	Convey("假设 Barrier 有 3 个参与者", t, func() {
+		b := New(3)
+		status := 0
+		b.SetAction(func() {
+			if b.IsBroken() {
+				status--
 			} else {
-				panic(err)
+				status++
+			}
+		})
+
+		Convey("如果第 1 个参与者执行了 Wait", func() {
+			goWait(b)
+			So(status, ShouldEqual, 0)
+
+			Convey("第 2 个参与者执行了 Wait", func() {
+				goWait(b)
+				So(status, ShouldEqual, 0)
+
+				Convey("第 3 个参与者执行了 Wait", func() {
+					err := b.Wait(context.TODO())
+					So(err, ShouldBeNil)
+					So(status, ShouldEqual, 1)
+				})
+
+				Convey("第 3 个参与者执行了 Break", func() {
+					b.Break()
+					So(status, ShouldEqual, -1)
+				})
+			})
+
+			Convey("第 2 个参与者执行了 Break", func() {
+				b.Break()
+				So(status, ShouldEqual, 0)
+
+				Convey("第 3 个参与者执行了 Wait", func() {
+					err := b.Wait(context.TODO())
+					So(err, ShouldEqual, ErrBroken)
+					So(status, ShouldEqual, -1)
+				})
+
+				Convey("第 3 个参与者执行了 Break", func() {
+					err := b.Wait(context.TODO())
+					So(err, ShouldEqual, ErrBroken)
+					So(status, ShouldEqual, -1)
+				})
+			})
+		})
+
+		Convey("如果第 1 个参与者执行了 Break", func() {
+			b.Break()
+			So(status, ShouldEqual, 0)
+
+			Convey("第 2 个参与者执行了 Wait", func() {
+				err := b.Wait(context.TODO())
+				So(err, ShouldEqual, ErrBroken)
+				So(status, ShouldEqual, 0)
+
+				Convey("第 3 个参与者执行了 Wait", func() {
+					err := b.Wait(context.TODO())
+					So(err, ShouldEqual, ErrBroken)
+					So(status, ShouldEqual, -1)
+				})
+
+				Convey("第 3 个参与者执行了 Break", func() {
+					b.Break()
+					So(status, ShouldEqual, -1)
+				})
+			})
+
+			Convey("第 2 个参与者执行了 Break", func() {
+				b.Break()
+				So(status, ShouldEqual, 0)
+
+				Convey("第 3 个参与者执行了 Wait", func() {
+					err := b.Wait(context.TODO())
+					So(err, ShouldEqual, ErrBroken)
+					So(status, ShouldEqual, -1)
+				})
+
+				Convey("第 3 个参与者执行了 Break", func() {
+					b.Break()
+					So(status, ShouldEqual, -1)
+				})
+			})
+		})
+	})
+}
+
+func TestTooMuchWaiting(t *testing.T) {
+	noSend := make(chan struct{})
+	Convey("如果所有的 participants 已经到齐了", t, func() {
+		b := New(1).SetAction(func() {
+			<-noSend
+		})
+		goWait(b)
+		Convey("再次调用 b.Wait，会触发 panic", func() {
+			So(func() {
+				b.Wait(context.TODO())
+			}, ShouldPanicWith, tooMuchWaiting)
+		})
+	})
+}
+
+func TestContextCancel(t *testing.T) {
+	Convey("Barrier 中有一个 goroutine 已经 waiting", t, func() {
+		b := New(2)
+		ctx, cancel := context.WithCancel(context.Background())
+		var err error
+		var waitBefore, waitAfter sync.WaitGroup
+		waitBefore.Add(1)
+		waitAfter.Add(1)
+		go func() {
+			waitBefore.Done()
+			err = b.Wait(ctx)
+			waitAfter.Done()
+		}()
+
+		waitBefore.Wait()
+
+		Convey("在 Cancel 之前，b 不是 broken", func() {
+			So(b.IsBroken(), ShouldBeFalse)
+			So(err, ShouldBeNil)
+			// NOTICE: 访问 Barrier 的原始数据结构，不是一个好行为
+			bp := b.(*barrier)
+			bp.lock.RLock()
+			So(bp.round.count, ShouldEqual, 1)
+			bp.lock.RUnlock()
+		})
+
+		cancel()
+		waitAfter.Wait()
+
+		Convey("在 Cancel 之后，b 是 broken", func() {
+			So(b.IsBroken(), ShouldBeTrue)
+			So(err.Error(), ShouldEqual, "barrier is broken: context canceled")
+			// NOTICE: 访问 Barrier 的原始数据结构，不是一个好行为
+			bp := b.(*barrier)
+			bp.lock.RLock()
+			So(bp.round.count, ShouldEqual, 1)
+			bp.lock.RUnlock()
+		})
+	})
+}
+
+// below is benchmark
+
+func oneRound(parties, cycles int, wait func(context.Context) error) {
+	var wg sync.WaitGroup
+	wg.Add(parties)
+	for i := 0; i < parties; i++ {
+		go func() {
+			for c := 0; c < cycles; c++ {
+				wait(context.TODO())
 			}
 			wg.Done()
 		}()
 	}
-
 	wg.Wait()
-	checkBarrier(t, b, n, n, true) // check that barrier is broken
-	if !isActionCalled {
-		t.Error("barrier action must be called")
-	}
-	if !b.IsBroken() {
-		t.Error("barrier must be broken via action error")
-	}
-	if expectedErrCount != 1 {
-		t.Error("expectedErrCount must be equal to", 1, ", but it equals to", expectedErrCount)
-	}
-	if errBrokenBarrierCount != int32(n-1) {
-		t.Error("expectedErrCount must be equal to", n-1, ", but it equals to", errBrokenBarrierCount)
-	}
-
-	// call await on broken barrier must return ErrBrokenBarrier
-	if b.Await(ctx) != ErrBrokenBarrier {
-		t.Error("call await on broken barrier must return ErrBrokenBarrier")
-	}
-
-	// do reset broken barrier
-	b.Reset()
-	if b.IsBroken() {
-		t.Error("barrier must not be broken after reset")
-	}
-	checkBarrier(t, b, n, 0, false)
 }
 
-func TestAwaitTooMuchGoroutines(t *testing.T) {
+func Benchmark_CyclicBarrier(b *testing.B) {
+	parties := 10
+	cycles := 10
+	cb := cyclicbarrier.New(parties)
+	//
+	for i := 1; i < b.N; i++ {
+		oneRound(parties, cycles, cb.Await)
+	}
+}
 
-	n := 100  // goroutines count
-	m := 1000 // inner cycle count
-	b := New(1)
-	ctx := context.Background()
+func Benchmark_Barrier(b *testing.B) {
+	parties := 10
+	cycles := 10
+	cb := New(parties)
+	//
+	for i := 1; i < b.N; i++ {
+		oneRound(parties, cycles, cb.Wait)
+	}
+}
 
-	var panicCount int32
+type boc struct {
+	isOk bool
+	l    sync.RWMutex
+	ch   chan struct{}
+}
 
-	wg := sync.WaitGroup{}
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func(num int) {
-			defer func() {
-				if recover() != nil {
-					atomic.AddInt32(&panicCount, 1)
+var g = 100
+
+func Benchmark_boc_readlock(b *testing.B) {
+	bb := &boc{}
+	var wg sync.WaitGroup
+	b.ResetTimer()
+	for i := 1; i < b.N; i++ {
+		wg.Add(g)
+		for j := 0; j < g; j++ {
+			go func() {
+				bb.l.RLock()
+				if bb.isOk {
+				} else {
 				}
+				bb.l.RUnlock()
 				wg.Done()
 			}()
-			for j := 0; j < m; j++ {
-				err := b.Await(ctx)
-				if err != nil {
-					panic(err)
-				}
-			}
-		}(i)
+		}
+		wg.Wait()
 	}
+}
 
-	wg.Wait()
-	checkBarrier(t, b, 1, 0, false)
+func Benchmark_boc_lock(b *testing.B) {
+	bb := &boc{}
+	var wg sync.WaitGroup
+	b.ResetTimer()
+	for i := 1; i < b.N; i++ {
+		wg.Add(g)
+		for j := 0; j < g; j++ {
+			go func() {
+				bb.l.Lock()
+				if bb.isOk {
+				} else {
+				}
+				bb.l.Unlock()
+				wg.Done()
+			}()
+		}
+		wg.Wait()
+	}
+}
 
-	if panicCount == 0 {
-		t.Error("barrier must panic when await is called from too much goroutines")
+func Benchmark_boc_readclosedChannel(b *testing.B) {
+	bb := &boc{
+		ch: make(chan struct{}),
+	}
+	close(bb.ch)
+	var wg sync.WaitGroup
+	b.ResetTimer()
+	for i := 1; i < b.N; i++ {
+		wg.Add(g)
+		for j := 0; j < g; j++ {
+			go func() {
+				bb.l.Lock()
+				select {
+				case <-bb.ch:
+				default:
+				}
+				bb.l.Unlock()
+				wg.Done()
+			}()
+		}
+		wg.Wait()
 	}
 }
