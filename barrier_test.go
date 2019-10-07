@@ -39,7 +39,7 @@ func TestNew(t *testing.T) {
 			Convey("就会 panic", func() {
 				So(func() {
 					New(0)
-				}, ShouldPanicWith, nonpositiveParticipants)
+				}, ShouldPanicWith, nonPositiveParticipants)
 			})
 		})
 
@@ -47,7 +47,7 @@ func TestNew(t *testing.T) {
 			Convey("也会 panic", func() {
 				So(func() {
 					New(-1)
-				}, ShouldPanicWith, nonpositiveParticipants)
+				}, ShouldPanicWith, nonPositiveParticipants)
 			})
 		})
 
@@ -55,7 +55,7 @@ func TestNew(t *testing.T) {
 			Convey("就不会 panic", func() {
 				So(func() {
 					New(2)
-				}, ShouldNotPanicWith, nonpositiveParticipants)
+				}, ShouldNotPanicWith, nonPositiveParticipants)
 			})
 		})
 
@@ -63,7 +63,7 @@ func TestNew(t *testing.T) {
 			Convey("也不会 panic", func() {
 				So(func() {
 					New(1)
-				}, ShouldNotPanicWith, nonpositiveParticipants)
+				}, ShouldNotPanicWith, nonPositiveParticipants)
 			})
 		})
 	})
@@ -83,7 +83,7 @@ func TestAction(t *testing.T) {
 				s := fmt.Sprintf("已经执行了 %d 个 Wait， ", i)
 				Convey(s+"Status 依然应该为 0", func() {
 					So(status, ShouldEqual, 0)
-					So(count(b), ShouldEqual, i)
+					So(count(b), ShouldEqual, i) // TODO: 这里出现过报错
 				})
 			}
 
@@ -105,18 +105,21 @@ func TestAction(t *testing.T) {
 }
 
 func TestBarrierStatus(t *testing.T) {
-	Convey("假设 Barrier 有 3 个参与者", t, func() {
+	Convey("假设 Barrier 有 3 个参与者，其中", t, func() {
 		b := New(3)
 		status := 0
+		statusCh := make(chan int, 1)
+
 		b.SetAction(func() {
 			if b.IsBroken() {
 				status--
 			} else {
 				status++
 			}
+			statusCh <- status
 		})
 
-		Convey("如果第 1 个参与者执行了 Wait", func() {
+		Convey("第 1 个参与者执行了 Wait", func() {
 			goWait(b)
 			So(status, ShouldEqual, 0)
 
@@ -127,13 +130,14 @@ func TestBarrierStatus(t *testing.T) {
 				Convey("第 3 个参与者执行了 Wait", func() {
 					err := b.Wait(context.TODO())
 					So(err, ShouldBeNil)
-					So(status, ShouldEqual, 1)
+					So(<-statusCh, ShouldEqual, 1)
 				})
 
 				Convey("第 3 个参与者执行了 Break", func() {
 					b.Break()
-					So(status, ShouldEqual, -1)
+					So(<-statusCh, ShouldEqual, -1)
 				})
+
 			})
 
 			Convey("第 2 个参与者执行了 Break", func() {
@@ -144,18 +148,18 @@ func TestBarrierStatus(t *testing.T) {
 				Convey("第 3 个参与者执行了 Wait", func() {
 					err := b.Wait(context.TODO())
 					So(err, ShouldEqual, ErrBroken)
-					So(status, ShouldEqual, -1)
+					So(<-statusCh, ShouldEqual, -1)
 				})
 
 				Convey("第 3 个参与者执行了 Break", func() {
 					err := b.Wait(context.TODO())
 					So(err, ShouldEqual, ErrBroken)
-					So(status, ShouldEqual, -1)
+					So(<-statusCh, ShouldEqual, -1)
 				})
 			})
 		})
 
-		Convey("如果第 1 个参与者执行了 Break", func() {
+		Convey("第 1 个参与者执行了 Break", func() {
 			b.Break()
 			So(status, ShouldEqual, 0)
 			So(b.IsBroken(), ShouldBeTrue)
@@ -169,12 +173,12 @@ func TestBarrierStatus(t *testing.T) {
 				Convey("第 3 个参与者执行了 Wait", func() {
 					err := b.Wait(context.TODO())
 					So(err, ShouldEqual, ErrBroken)
-					So(status, ShouldEqual, -1)
+					So(<-statusCh, ShouldEqual, -1)
 				})
 
 				Convey("第 3 个参与者执行了 Break", func() {
 					b.Break()
-					So(status, ShouldEqual, -1)
+					So(<-statusCh, ShouldEqual, -1)
 				})
 			})
 
@@ -186,12 +190,12 @@ func TestBarrierStatus(t *testing.T) {
 				Convey("第 3 个参与者执行了 Wait", func() {
 					err := b.Wait(context.TODO())
 					So(err, ShouldEqual, ErrBroken)
-					So(status, ShouldEqual, -1)
+					So(<-statusCh, ShouldEqual, -1)
 				})
 
 				Convey("第 3 个参与者执行了 Break", func() {
 					b.Break()
-					So(status, ShouldEqual, -1)
+					So(<-statusCh, ShouldEqual, -1)
 				})
 			})
 		})
@@ -244,6 +248,31 @@ func TestContextCancel(t *testing.T) {
 			So(err.Error(), ShouldEqual, "barrier is broken: context canceled")
 			So(count(b), ShouldEqual, 1)
 		})
+	})
+}
+
+func TestBarrierCyclic(t *testing.T) {
+	round := 5
+	participants := 7
+	roundCount := 0
+	roundCh := make(chan int, 1)
+	b := New(participants).SetAction(func() {
+		roundCount++
+		roundCh <- roundCount
+	})
+
+	Convey("循环使用同一个 Barrier", t, func() {
+		for r := 1; r <= round; r++ {
+			for p := 1; p < participants; p++ {
+				goWait(b)
+				So(count(b), ShouldEqual, p)
+			}
+			// err := b.Wait(context.TODO())
+			// So(err, ShouldBeNil)
+			err := b.Wait(context.TODO())
+			So(err, ShouldBeNil)
+			So(<-roundCh, ShouldEqual, r)
+		}
 	})
 }
 

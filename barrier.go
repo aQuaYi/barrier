@@ -8,8 +8,8 @@ import (
 )
 
 const (
-	nonpositiveParticipants = "participants is NOT positive"
-	tooMuchWaiting          = "goroutines calling b.Wait() is more than b.participants. Make sure they are equal."
+	nonPositiveParticipants = "participants is NOT positive"
+	tooMuchWaiting          = "calling b.Wait() is more than b.participants. Make sure they are equal."
 )
 
 var (
@@ -57,7 +57,7 @@ type Barrier interface {
 // New initializes a new instance of the Barrier, specifying the number of parties.
 func New(participants int) Barrier {
 	if participants <= 0 {
-		panic(nonpositiveParticipants)
+		panic(nonPositiveParticipants)
 	}
 	return &barrier{
 		participants: participants,
@@ -88,6 +88,14 @@ func newRound() *round {
 		success: make(chan struct{}),
 		broken:  make(chan struct{}),
 	}
+}
+
+func (r *round) newComer() (count int, success, broken chan struct{}) {
+	r.count++
+	count = r.count
+	success = r.success
+	broken = r.broken
+	return
 }
 
 func (b *barrier) Wait(ctx context.Context) (err error) {
@@ -123,10 +131,11 @@ func (b *barrier) Break() {
 
 // lastArrived to do action and reset
 func (b *barrier) lastArrived() {
+	// b.resetRound()
 	if b.action != nil {
 		b.action()
 	}
-	b.resetRound()
+	b.resetRound() // TODO: 为什么把这一行移到上面去，程序就错误了。
 }
 
 func (b *barrier) IsBroken() (res bool) {
