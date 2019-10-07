@@ -251,6 +251,7 @@ func TestContextCancel(t *testing.T) {
 	})
 }
 
+// TODO: 这里出现过报错
 func TestBarrierCyclic(t *testing.T) {
 	round := 5
 	participants := 7
