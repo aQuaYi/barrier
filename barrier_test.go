@@ -22,6 +22,16 @@ func goWait(b Barrier) {
 	return
 }
 
+// count arriver
+func count(b Barrier) int {
+	// NOTICE: 访问 Barrier 的原始数据结构，不是一个好行为
+	bp := b.(*barrier)
+	bp.lock.RLock()
+	res := bp.round.count
+	bp.lock.RUnlock()
+	return res
+}
+
 func TestNew(t *testing.T) {
 	Convey("如果想要新建一个 Barrier", t, func() {
 
@@ -41,13 +51,20 @@ func TestNew(t *testing.T) {
 			})
 		})
 
+		Convey("当 participants 是 2 的时候", func() {
+			Convey("就不会 panic", func() {
+				So(func() {
+					New(2)
+				}, ShouldNotPanicWith, nonpositiveParticipants)
+			})
+		})
+
 		Convey("当 participants 是 1 的时候", func() {
 			Convey("也不会 panic", func() {
 				So(func() {
 					New(1)
 				}, ShouldNotPanicWith, nonpositiveParticipants)
 			})
-
 		})
 	})
 }
@@ -66,6 +83,7 @@ func TestAction(t *testing.T) {
 				s := fmt.Sprintf("已经执行了 %d 个 Wait， ", i)
 				Convey(s+"Status 依然应该为 0", func() {
 					So(status, ShouldEqual, 0)
+					So(count(b), ShouldEqual, i)
 				})
 			}
 
@@ -121,6 +139,7 @@ func TestBarrierStatus(t *testing.T) {
 			Convey("第 2 个参与者执行了 Break", func() {
 				b.Break()
 				So(status, ShouldEqual, 0)
+				So(b.IsBroken(), ShouldBeTrue)
 
 				Convey("第 3 个参与者执行了 Wait", func() {
 					err := b.Wait(context.TODO())
@@ -139,10 +158,12 @@ func TestBarrierStatus(t *testing.T) {
 		Convey("如果第 1 个参与者执行了 Break", func() {
 			b.Break()
 			So(status, ShouldEqual, 0)
+			So(b.IsBroken(), ShouldBeTrue)
 
 			Convey("第 2 个参与者执行了 Wait", func() {
 				err := b.Wait(context.TODO())
 				So(err, ShouldEqual, ErrBroken)
+				So(b.IsBroken(), ShouldBeTrue)
 				So(status, ShouldEqual, 0)
 
 				Convey("第 3 个参与者执行了 Wait", func() {
@@ -159,6 +180,7 @@ func TestBarrierStatus(t *testing.T) {
 
 			Convey("第 2 个参与者执行了 Break", func() {
 				b.Break()
+				So(b.IsBroken(), ShouldBeTrue)
 				So(status, ShouldEqual, 0)
 
 				Convey("第 3 个参与者执行了 Wait", func() {
@@ -179,9 +201,10 @@ func TestBarrierStatus(t *testing.T) {
 func TestTooMuchWaiting(t *testing.T) {
 	noSend := make(chan struct{})
 	Convey("如果所有的 participants 已经到齐了", t, func() {
-		b := New(1).SetAction(func() {
+		b := New(2).SetAction(func() {
 			<-noSend
 		})
+		goWait(b)
 		goWait(b)
 		Convey("再次调用 b.Wait，会触发 panic", func() {
 			So(func() {
@@ -210,11 +233,7 @@ func TestContextCancel(t *testing.T) {
 		Convey("在 Cancel 之前，b 不是 broken", func() {
 			So(b.IsBroken(), ShouldBeFalse)
 			So(err, ShouldBeNil)
-			// NOTICE: 访问 Barrier 的原始数据结构，不是一个好行为
-			bp := b.(*barrier)
-			bp.lock.RLock()
-			So(bp.round.count, ShouldEqual, 1)
-			bp.lock.RUnlock()
+			So(count(b), ShouldEqual, 1)
 		})
 
 		cancel()
@@ -223,11 +242,7 @@ func TestContextCancel(t *testing.T) {
 		Convey("在 Cancel 之后，b 是 broken", func() {
 			So(b.IsBroken(), ShouldBeTrue)
 			So(err.Error(), ShouldEqual, "barrier is broken: context canceled")
-			// NOTICE: 访问 Barrier 的原始数据结构，不是一个好行为
-			bp := b.(*barrier)
-			bp.lock.RLock()
-			So(bp.round.count, ShouldEqual, 1)
-			bp.lock.RUnlock()
+			So(count(b), ShouldEqual, 1)
 		})
 	})
 }
